@@ -3,6 +3,7 @@ import { Outfit, Fraunces, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { WebMCPTools } from "@/components/webmcp-tools";
 import { cn } from "@/lib/utils";
+import { Toaster } from "@/components/ui/toast";
 
 const frauncesHeading = Fraunces({
   variable: "--font-heading",
@@ -40,6 +41,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col">
         {children}
+        <Toaster />
         <WebMCPTools />
       </body>
     </html>

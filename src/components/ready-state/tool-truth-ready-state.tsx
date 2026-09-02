@@ -1,5 +1,5 @@
 import { SafetyNote } from "@/components/ready-state/safety-note";
-import { WebsiteInspectionForm } from "@/components/ready-state/website-inspection-form";
+import { WebsiteInspectionForm } from "@/features/inspect/components/website-inspection-form";
 import { Separator } from "../ui/separator";
 
 export function ToolTruthReadyState() {

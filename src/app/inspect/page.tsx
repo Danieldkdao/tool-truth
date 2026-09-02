@@ -181,9 +181,6 @@ export default function InspectPage() {
               <p className="min-w-0 flex-1 truncate font-mono text-muted-foreground">
                 https://fixture.tooltruth.dev/products/headphones
               </p>
-              <p className="hidden text-muted-foreground md:block">
-                Isolated session
-              </p>
             </div>
           </div>
 
@@ -226,7 +223,6 @@ export default function InspectPage() {
                     </div>
                   </dl>
                 </section>
-
                 <aside className="border-l-2 border-primary/30 bg-accent/40 px-6 py-5">
                   <p className="font-semibold">Order preview</p>
                   <div className="mt-5 space-y-3 text-muted-foreground">
