@@ -9,10 +9,10 @@ type DetectedToolsSectionProps = {
   onSelectTool: (tool: ToolKey) => void;
 };
 
-export function DetectedToolsSection({
+export const DetectedToolsSection = ({
   selectedTool,
   onSelectTool,
-}: DetectedToolsSectionProps) {
+}: DetectedToolsSectionProps) => {
   return (
     <aside className="inspect-tools-panel border-b border-border bg-background/70">
       <section className="inspect-tools-scroll px-3 py-4 lg:py-5">
@@ -68,4 +68,4 @@ export function DetectedToolsSection({
       </section>
     </aside>
   );
-}
+};

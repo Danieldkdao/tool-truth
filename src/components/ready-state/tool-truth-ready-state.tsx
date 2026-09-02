@@ -2,7 +2,7 @@ import { SafetyNote } from "@/components/ready-state/safety-note";
 import { WebsiteInspectionForm } from "@/features/inspect/components/website-inspection-form";
 import { Separator } from "../ui/separator";
 
-export function ToolTruthReadyState() {
+export const ToolTruthReadyState = () => {
   return (
     <div className="relative flex min-h-svh flex-col overflow-hidden bg-background">
       <div
@@ -39,4 +39,4 @@ export function ToolTruthReadyState() {
       </main>
     </div>
   );
-}
+};

@@ -20,6 +20,9 @@ const nextConfig: NextConfig = {
   },
   cacheComponents: true,
   reactCompiler: true,
+  logging: {
+    browserToTerminal: true,
+  },
 };
 
 export default nextConfig;

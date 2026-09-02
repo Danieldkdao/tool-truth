@@ -7,9 +7,9 @@ type BrowserPreviewSectionProps = {
   selectedTool: ToolKey;
 };
 
-export function BrowserPreviewSection({
+export const BrowserPreviewSection = ({
   selectedTool,
-}: BrowserPreviewSectionProps) {
+}: BrowserPreviewSectionProps) => {
   return (
     <div className="inspect-browser-frame mx-4 my-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-foreground/15 bg-card shadow-[0_16px_44px_-24px_oklch(0.22_0.02_260/0.38)] sm:mx-5 sm:my-5">
       <div className="border-b border-border bg-muted/75 px-3 py-3 sm:px-4">
@@ -96,4 +96,4 @@ export function BrowserPreviewSection({
       </div>
     </div>
   );
-}
+};

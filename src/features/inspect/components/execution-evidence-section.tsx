@@ -17,10 +17,10 @@ type ExecutionEvidenceSectionProps = {
 
 const evidenceTabs: EvidenceTab[] = ["Timeline", "State diff", "Network"];
 
-export function ExecutionEvidenceSection({
+export const ExecutionEvidenceSection = ({
   activeTab,
   onActiveTabChange,
-}: ExecutionEvidenceSectionProps) {
+}: ExecutionEvidenceSectionProps) => {
   return (
     <Tabs
       value={activeTab}
@@ -96,4 +96,4 @@ export function ExecutionEvidenceSection({
       </div>
     </Tabs>
   );
-}
+};

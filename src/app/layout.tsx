@@ -26,7 +26,7 @@ export const metadata: Metadata = {
     "ToolTruth is a WebMCP tool verification platform that allows you and your agents to verify WebMCP tools from other websites and make sure that they work as intended.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+const RootLayout = ({ children }: LayoutProps<"/">) => {
   return (
     <html
       lang="en"
@@ -46,4 +46,6 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       </body>
     </html>
   );
-}
+};
+
+export default RootLayout;

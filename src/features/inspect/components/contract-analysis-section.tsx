@@ -13,12 +13,12 @@ type ContractAnalysisSectionProps = {
   onRunVerification: () => void;
 };
 
-export function ContractAnalysisSection({
+export const ContractAnalysisSection = ({
   selectedTool,
   finding,
   isRunning,
   onRunVerification,
-}: ContractAnalysisSectionProps) {
+}: ContractAnalysisSectionProps) => {
   return (
     <aside className="inspect-analysis border-t border-border bg-card">
       <section className="border-b border-destructive/20 bg-destructive/[0.055] px-6 py-6">
@@ -109,4 +109,4 @@ export function ContractAnalysisSection({
       </section>
     </aside>
   );
-}
+};

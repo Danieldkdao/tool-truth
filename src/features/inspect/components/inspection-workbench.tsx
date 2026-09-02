@@ -12,17 +12,17 @@ import {
   type ToolKey,
 } from "@/features/inspect/components/inspection-data";
 
-export function InspectionWorkbench() {
+export const InspectionWorkbench = () => {
   const [selectedTool, setSelectedTool] = useState<ToolKey>("preview_order");
   const [activeTab, setActiveTab] = useState<EvidenceTab>("Timeline");
   const [isRunning, setIsRunning] = useState(false);
 
   const finding = findings[selectedTool];
 
-  function runMockVerification() {
+  const runMockVerification = () => {
     setIsRunning(true);
     window.setTimeout(() => setIsRunning(false), 1100);
-  }
+  };
 
   return (
     <main className="inspect-shell min-h-svh bg-card text-base text-foreground">
@@ -47,4 +47,4 @@ export function InspectionWorkbench() {
       />
     </main>
   );
-}
+};
