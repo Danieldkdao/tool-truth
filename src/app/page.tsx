@@ -1,5 +1,5 @@
-import { Button } from "@/components/ui/button";
+import { ToolTruthReadyState } from "@/components/ready-state/tool-truth-ready-state";
 
 export default function Home() {
-  return <Button>Get Started</Button>;
+  return <ToolTruthReadyState />;
 }
