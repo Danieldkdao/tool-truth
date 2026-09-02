@@ -1,3 +1,5 @@
+import { AlertCircle, SearchX } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import {
   Progress,
@@ -6,16 +8,13 @@ import {
 } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import {
-  type DetectedTool,
-  type ToolKey,
-} from "@/features/inspect/components/inspection-data";
+import type { DetectedTool } from "@/features/inspect/components/inspection-data";
 import type { SectionProgress } from "@/features/inspect/components/inspection-stream";
 
 type DetectedToolsSectionProps = {
   tools: DetectedTool[];
-  selectedTool: ToolKey;
-  onSelectTool: (tool: ToolKey) => void;
+  selectedTool: string | null;
+  onSelectTool: (tool: string) => void;
 };
 
 export const DetectedToolsSection = ({
@@ -35,6 +34,18 @@ export const DetectedToolsSection = ({
           aria-label="Detected WebMCP tools"
           className="scrollbar-none scroll-fade-x flex snap-x snap-mandatory gap-2 overflow-x-auto px-3 pb-2 lg:mx-0 lg:block lg:space-y-1 lg:overflow-visible lg:px-0 lg:pb-0 lg:scroll-fade"
         >
+          {tools.length === 0 && (
+            <div className="mx-3 flex min-h-48 flex-col items-center justify-center rounded-lg border border-dashed border-border px-5 py-8 text-center lg:mx-0">
+              <SearchX
+                className="size-6 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <p className="mt-4 font-semibold">No WebMCP tools found</p>
+              <p className="mt-2 leading-6 text-muted-foreground">
+                The page loaded successfully, but it did not register any tools.
+              </p>
+            </div>
+          )}
           {tools.map((tool) => {
             const selected = selectedTool === tool.id;
 
@@ -75,6 +86,31 @@ export const DetectedToolsSection = ({
 
       <section className="inspect-safety hidden border-t border-border px-6 py-5 leading-7 text-muted-foreground">
         This disposable session is isolated from your normal browser data.
+      </section>
+    </aside>
+  );
+};
+
+type DetectedToolsSectionErrorProps = {
+  message: string;
+};
+
+export const DetectedToolsSectionError = ({
+  message,
+}: DetectedToolsSectionErrorProps) => {
+  return (
+    <aside
+      className="inspect-tools-panel border-b border-border bg-background/70"
+      role="status"
+    >
+      <section className="inspect-tools-scroll px-6 py-5">
+        <div className="flex items-center gap-3">
+          <AlertCircle className="size-5 text-destructive" aria-hidden="true" />
+          <h1 className="font-sans font-semibold">Tool discovery failed</h1>
+        </div>
+        <p className="mt-4 border-l-2 border-destructive/40 pl-4 leading-7 text-muted-foreground">
+          {message}
+        </p>
       </section>
     </aside>
   );

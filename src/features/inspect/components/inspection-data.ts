@@ -15,10 +15,13 @@ export type Finding = {
 };
 
 export type DetectedTool = {
-  id: ToolKey;
+  id: string;
   name: string;
   description: string;
   result: string;
+  frameId?: string;
+  inputSchema?: string | Record<string, unknown>;
+  annotations?: Record<string, unknown>;
 };
 
 export type BrowserPreviewData = {

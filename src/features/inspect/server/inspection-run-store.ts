@@ -2,7 +2,8 @@ import "server-only";
 
 import { randomBytes } from "node:crypto";
 
-import type { ValidatedInspectionTarget } from "./validate-inspection-url";
+import type { DetectedTool } from "@/features/inspect/components/inspection-data";
+import type { ValidatedInspectionTarget } from "@/features/inspect/server/validate-inspection-url";
 
 const RUN_TTL_MS = 60 * 60 * 1000;
 const MAX_ACTIVE_RUNS = 500;
@@ -15,6 +16,7 @@ export type InspectionRun = {
   resolvedAddresses: string[];
   createdAt: number;
   expiresAt: number;
+  toolDiscovery?: Promise<DetectedTool[]>;
 };
 
 const globalForInspectionRuns = globalThis as typeof globalThis & {
@@ -80,4 +82,12 @@ export const getInspectionRun = (runId: string) => {
   }
 
   return run;
+};
+
+export const getOrCreateToolDiscovery = (
+  run: InspectionRun,
+  discover: () => Promise<DetectedTool[]>,
+) => {
+  run.toolDiscovery ??= discover();
+  return run.toolDiscovery;
 };

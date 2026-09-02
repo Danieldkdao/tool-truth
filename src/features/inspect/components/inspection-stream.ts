@@ -16,7 +16,7 @@ export type SectionProgress = {
   message: string;
 };
 
-export type MockInspectionStreamEvent =
+export type InspectionStreamEvent =
   | {
       kind: "run.connected";
       runId: string;
@@ -27,8 +27,16 @@ export type MockInspectionStreamEvent =
       progress: SectionProgress;
     }
   | {
+      kind: "tool.discovered";
+      data: DetectedTool;
+    }
+  | {
       kind: "tools.ready";
       data: DetectedTool[];
+    }
+  | {
+      kind: "tools.failed";
+      message: string;
     }
   | {
       kind: "browser.ready";

@@ -1,35 +1,23 @@
 import {
   browserPreview,
   contractAnalysis,
-  detectedTools,
   executionEvidence,
 } from "@/features/inspect/components/inspection-data";
-import type { MockInspectionStreamEvent } from "@/features/inspect/components/inspection-stream";
-import { getInspectionRun } from "@/features/inspect/server/inspection-run-store";
+import type { InspectionStreamEvent } from "@/features/inspect/components/inspection-stream";
+import { discoverWebMcpTools } from "@/features/inspect/server/discover-webmcp-tools";
+import {
+  getInspectionRun,
+  getOrCreateToolDiscovery,
+} from "@/features/inspect/server/inspection-run-store";
 import type { ParamsId } from "@/lib/types";
 
 type TimedMockEvent = {
   delayMs: number;
-  event: MockInspectionStreamEvent;
+  event: InspectionStreamEvent;
 };
 
-const createMockEventSequence = (runId: string): TimedMockEvent[] => {
+const createMockEventSequence = (): TimedMockEvent[] => {
   return [
-    {
-      delayMs: 0,
-      event: { kind: "run.connected", runId },
-    },
-    {
-      delayMs: 120,
-      event: {
-        kind: "section.progress",
-        section: "tools",
-        progress: {
-          value: 18,
-          message: "Opening the WebMCP discovery channel",
-        },
-      },
-    },
     {
       delayMs: 180,
       event: {
@@ -40,21 +28,6 @@ const createMockEventSequence = (runId: string): TimedMockEvent[] => {
           message: "Launching a disposable browser context",
         },
       },
-    },
-    {
-      delayMs: 700,
-      event: {
-        kind: "section.progress",
-        section: "tools",
-        progress: {
-          value: 62,
-          message: "Reading registered tool contracts",
-        },
-      },
-    },
-    {
-      delayMs: 1_350,
-      event: { kind: "tools.ready", data: detectedTools },
     },
     {
       delayMs: 1_500,
@@ -156,17 +129,13 @@ const createMockEventSequence = (runId: string): TimedMockEvent[] => {
       delayMs: 6_150,
       event: { kind: "analysis.ready", data: contractAnalysis },
     },
-    {
-      delayMs: 6_300,
-      event: { kind: "run.completed" },
-    },
   ];
 };
 
 const encodeEvent = (
   encoder: TextEncoder,
   id: number,
-  event: MockInspectionStreamEvent,
+  event: InspectionStreamEvent,
 ) => {
   return encoder.encode(
     `id: ${id}\nevent: inspection\ndata: ${JSON.stringify(event)}\n\n`,
@@ -193,6 +162,9 @@ export const GET = async (
   const encoder = new TextEncoder();
   const timers: ReturnType<typeof setTimeout>[] = [];
   let closed = false;
+  let discoveryFinished = false;
+  let mockSequenceFinished = false;
+  let eventId = 0;
 
   const clearTimers = () => {
     for (const timer of timers) {
@@ -212,24 +184,90 @@ export const GET = async (
         controller.close();
       };
 
-      controller.enqueue(encoder.encode("retry: 1500\n: mock stream ready\n\n"));
+      const sendEvent = (event: InspectionStreamEvent) => {
+        if (closed) {
+          return;
+        }
 
-      createMockEventSequence(runId).forEach(({ delayMs, event }, index) => {
+        eventId += 1;
+        controller.enqueue(encodeEvent(encoder, eventId, event));
+      };
+
+      const finishIfReady = () => {
+        if (closed || !discoveryFinished || !mockSequenceFinished) {
+          return;
+        }
+
+        sendEvent({ kind: "run.completed" });
+        const closeTimer = setTimeout(closeStream, 100);
+        timers.push(closeTimer);
+      };
+
+      controller.enqueue(encoder.encode("retry: 1500\n: inspection stream ready\n\n"));
+      sendEvent({ kind: "run.connected", runId });
+      sendEvent({
+        kind: "section.progress",
+        section: "tools",
+        progress: {
+          value: 12,
+          message: "Opening the WebMCP discovery channel",
+        },
+      });
+
+      const mockEvents = createMockEventSequence();
+      mockEvents.forEach(({ delayMs, event }, index) => {
         const timer = setTimeout(() => {
           if (closed) {
             return;
           }
 
-          controller.enqueue(encodeEvent(encoder, index + 1, event));
+          sendEvent(event);
 
-          if (event.kind === "run.completed") {
-            const closeTimer = setTimeout(closeStream, 100);
-            timers.push(closeTimer);
+          if (index === mockEvents.length - 1) {
+            mockSequenceFinished = true;
+            finishIfReady();
           }
         }, delayMs);
 
         timers.push(timer);
       });
+
+      void getOrCreateToolDiscovery(run, () =>
+        discoverWebMcpTools(run.targetUrl, (progress) => {
+          sendEvent({
+            kind: "section.progress",
+            section: "tools",
+            progress,
+          });
+        }),
+      )
+        .then(async (tools) => {
+          for (const tool of tools) {
+            sendEvent({ kind: "tool.discovered", data: tool });
+
+            await new Promise<void>((resolve) => {
+              setTimeout(resolve, 90);
+            });
+          }
+
+          sendEvent({ kind: "tools.ready", data: tools });
+        })
+        .catch((error: unknown) => {
+          console.error("WebMCP tool discovery failed", {
+            runId,
+            targetHostname: run.targetHostname,
+            error,
+          });
+          sendEvent({
+            kind: "tools.failed",
+            message:
+              "The website could not be opened in the discovery browser, or its WebMCP tools could not be read.",
+          });
+        })
+        .finally(() => {
+          discoveryFinished = true;
+          finishIfReady();
+        });
 
       request.signal.addEventListener("abort", () => {
         closed = true;
