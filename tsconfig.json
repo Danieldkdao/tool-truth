@@ -20,8 +20,15 @@
     ],
     "paths": {
       "@/*": ["./src/*"]
-    }
+    },
+    "types": ["webmcp-types"]
   },
+  "noUnusedLocals": true,
+  "noUnusedParameters": true,
+  "allowUnusedLabels": false,
+  "noUncheckedSideEffectImports": true,
+  "noFallthroughCasesInSwitch": true,
+  "allowUnreachableCode": false,
   "include": [
     "next-env.d.ts",
     "**/*.ts",
