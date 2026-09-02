@@ -62,10 +62,14 @@ export const WebMCPTools = () => {
           signal: registration.signal,
         },
       )
-      .catch(console.error);
+      .catch((error: unknown) => {
+        if (!registration.signal.aborted) {
+          console.error(error);
+        }
+      });
 
     return () => {
-      registration.abort("WebMCPTools component unmounted.");
+      registration.abort();
     };
   }, []);
 

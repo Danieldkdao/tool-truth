@@ -1,4 +1,7 @@
-import { InspectionWorkbench } from "@/features/inspect/components/inspection-workbench";
+import {
+  InspectionWorkbench,
+  InspectionWorkbenchSkeleton,
+} from "@/features/inspect/components/inspection-workbench";
 import { ParamsId } from "@/lib/types";
 import { Suspense } from "react";
 
@@ -22,12 +25,12 @@ const InspectPage = (props: InspectPageProps) => {
 };
 
 const InspectPageLoading = () => {
-  return <div>loading</div>;
+  return <InspectionWorkbenchSkeleton />;
 };
 
 const InspectPageSuspense = async ({ params }: InspectPageProps) => {
   const { runId } = await params;
-  return <InspectionWorkbench />;
+  return <InspectionWorkbench key={runId} runId={runId} />;
 };
 
 export default InspectPage;

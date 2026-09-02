@@ -2,6 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowRight, Globe2, Sparkles } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { Controller, useForm } from "react-hook-form";
 
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,7 @@ import {
 import { showToast } from "@/lib/utils";
 
 export const WebsiteInspectionForm = () => {
+  const router = useRouter();
   const form = useForm<InspectFormValues>({
     resolver: zodResolver(inspectFormSchema),
     defaultValues: {
@@ -51,6 +53,7 @@ export const WebsiteInspectionForm = () => {
       showToast("Inspection session started", "success", {
         description: `Run ID: ${result.runId}`,
       });
+      router.push(`/inspect/${encodeURIComponent(result.runId)}`);
     } catch (error) {
       const message =
         error instanceof Error
