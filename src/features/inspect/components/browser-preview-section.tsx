@@ -114,6 +114,37 @@ export const BrowserPreviewSection = ({
   );
 };
 
+export const BrowserPreviewLocalPlaceholder = () => {
+  return (
+    <div className="inspect-browser-frame mx-4 my-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-foreground/15 bg-card shadow-[0_16px_44px_-24px_oklch(0.22_0.02_260/0.38)] sm:mx-5 sm:my-5">
+      <div className="border-b border-border bg-muted/75 px-3 py-3 sm:px-4">
+        <div className="flex min-h-11 items-center gap-3 rounded-lg border border-border/90 bg-card px-4 shadow-xs">
+          <LockKeyhole
+            className="size-4 shrink-0 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <p className="min-w-0 flex-1 truncate font-mono text-muted-foreground">
+            Local Stagehand session
+          </p>
+        </div>
+      </div>
+
+      <div className="inspect-browser flex min-h-[31rem] flex-1 items-center justify-center bg-card p-8">
+        <div className="max-w-md text-center">
+          <LockKeyhole className="mx-auto size-7 text-primary" aria-hidden="true" />
+          <h2 className="mt-5 font-sans text-2xl font-semibold">
+            Browser evidence runs locally
+          </h2>
+          <p className="mt-3 leading-7 text-muted-foreground">
+            ToolTruth opens a disposable local browser for each probe. Live View
+            will appear here when the runner is switched to Browserbase.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 type BrowserPreviewSectionProgressProps = {
   progress: SectionProgress;
 };

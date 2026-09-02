@@ -23,7 +23,12 @@ type ExecutionEvidenceSectionProps = {
   onActiveTabChange: (tab: EvidenceTab) => void;
 };
 
-const evidenceTabs: EvidenceTab[] = ["Timeline", "State diff", "Network"];
+const evidenceTabs: EvidenceTab[] = [
+  "Timeline",
+  "State diff",
+  "Network",
+  "Logs",
+];
 
 export const ExecutionEvidenceSection = ({
   data,
@@ -59,10 +64,15 @@ export const ExecutionEvidenceSection = ({
 
       <div className="inspect-evidence-scroll max-h-[22rem] overflow-auto px-5 py-4 sm:px-6">
         <TabsContent value="Timeline" className="text-base">
+          {data.timeline.length === 0 && (
+            <p className="py-6 text-muted-foreground">
+              No timeline events were recorded.
+            </p>
+          )}
           <ol className="divide-y divide-border">
-            {data.timeline.map(([time, event, detail]) => (
+            {data.timeline.map(([time, event, detail], index) => (
               <li
-                key={time}
+                key={`${time}-${event}-${index}`}
                 className="grid gap-1 py-3 sm:grid-cols-[6.5rem_10rem_1fr] sm:gap-4"
               >
                 <time className="font-mono text-muted-foreground">{time}</time>
@@ -76,30 +86,49 @@ export const ExecutionEvidenceSection = ({
         </TabsContent>
 
         <TabsContent value="State diff" className="text-base">
-          <div className="min-w-[34rem]">
-            <div className="grid grid-cols-[1fr_9rem_9rem] gap-5 border-b border-border pb-3 font-medium text-muted-foreground">
-              <p>State path</p>
-              <p>Before</p>
-              <p>After</p>
-            </div>
-            {data.stateChanges.map(([path, before, after]) => (
-              <div
-                key={path}
-                className="grid grid-cols-[1fr_9rem_9rem] gap-5 border-b border-border py-3"
-              >
-                <p className="font-mono">{path}</p>
-                <p>{before}</p>
-                <p className="font-medium text-destructive">{after}</p>
+          {data.stateChanges.length === 0 && (
+            <p className="py-6 text-muted-foreground">
+              No observable browser state changed during this invocation.
+            </p>
+          )}
+          {data.stateChanges.length > 0 && (
+            <div className="min-w-[38rem]">
+              <div className="grid grid-cols-[minmax(8rem,0.8fr)_minmax(0,1fr)_minmax(0,1fr)] gap-4 border-b border-border pb-3 font-medium text-muted-foreground">
+                <p className="min-w-0">State path</p>
+                <p className="min-w-0">Before</p>
+                <p className="min-w-0">After</p>
               </div>
-            ))}
-          </div>
+              {data.stateChanges.map(([path, before, after]) => (
+                <div
+                  key={path}
+                  className="grid grid-cols-[minmax(8rem,0.8fr)_minmax(0,1fr)_minmax(0,1fr)] items-start gap-4 border-b border-border py-3 last:border-b-0"
+                >
+                  <p className="min-w-0 break-words font-mono leading-6">
+                    {path}
+                  </p>
+                  <p className="min-w-0 break-words leading-6 [overflow-wrap:anywhere]">
+                    {before}
+                  </p>
+                  <p className="min-w-0 break-words font-medium leading-6 text-destructive [overflow-wrap:anywhere]">
+                    {after}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="Network" className="text-base">
+          {data.network.length === 0 && (
+            <p className="py-6 text-muted-foreground">
+              No fetch or XMLHttpRequest activity was observed during the tool
+              invocation.
+            </p>
+          )}
           <div className="space-y-3">
-            {data.network.map((entry) => (
+            {data.network.map((entry, index) => (
               <div
-                key={`${entry.method}-${entry.path}`}
+                key={`${entry.method}-${entry.path}-${index}`}
                 className="grid gap-3 sm:grid-cols-[5rem_1fr_auto]"
               >
                 <p className="font-mono font-medium text-destructive">
@@ -113,8 +142,69 @@ export const ExecutionEvidenceSection = ({
             ))}
           </div>
         </TabsContent>
+
+        <TabsContent value="Logs" className="text-base">
+          {data.logs.length === 0 && (
+            <p className="py-6 text-muted-foreground">
+              No Stagehand, browser, runtime, or analysis logs were recorded.
+            </p>
+          )}
+          <ol className="divide-y divide-border">
+            {data.logs.map((entry, index) => (
+              <li
+                key={`${entry.time}-${entry.source}-${index}`}
+                className="grid gap-1 py-3 sm:grid-cols-[6.5rem_7rem_1fr] sm:gap-4"
+              >
+                <time className="font-mono text-muted-foreground">
+                  {entry.time}
+                </time>
+                <p className="font-mono font-medium">{entry.source}</p>
+                <p
+                  className={
+                    entry.level === "error"
+                      ? "min-w-0 break-words text-destructive"
+                      : "min-w-0 break-words text-muted-foreground"
+                  }
+                >
+                  {entry.message}
+                </p>
+              </li>
+            ))}
+          </ol>
+        </TabsContent>
       </div>
     </Tabs>
+  );
+};
+
+type ExecutionEvidenceSectionEmptyProps = {
+  error?: string | null;
+};
+
+export const ExecutionEvidenceSectionEmpty = ({
+  error,
+}: ExecutionEvidenceSectionEmptyProps) => {
+  return (
+    <section className="inspect-evidence border-t border-border bg-card">
+      <div className="border-b border-border px-5 py-4 sm:px-6">
+        <h2 className="font-sans font-semibold">Execution evidence</h2>
+        <p className="mt-1 text-muted-foreground">
+          {error ? "The latest probe did not complete" : "No probe has run yet"}
+        </p>
+      </div>
+      <div className="inspect-evidence-scroll px-5 py-6 sm:px-6">
+        <p
+          className={
+            error
+              ? "border-l-2 border-destructive pl-4 leading-7 text-destructive"
+              : "leading-7 text-muted-foreground"
+          }
+        >
+          {error ??
+            "Select a detected tool, then run verification to collect its timeline, state changes, network requests, and logs."}
+        </p>
+      </div>
+    </section>
   );
 };
 

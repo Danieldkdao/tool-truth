@@ -1,4 +1,11 @@
-import { AlertCircle, SearchX } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Circle,
+  ListChecks,
+  SearchX,
+  XCircle,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -8,19 +15,30 @@ import {
 } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import type { DetectedTool } from "@/features/inspect/components/inspection-data";
+import type {
+  DetectedTool,
+  ToolVerificationStatus,
+} from "@/features/inspect/components/inspection-data";
 import type { SectionProgress } from "@/features/inspect/components/inspection-stream";
 
 type DetectedToolsSectionProps = {
   tools: DetectedTool[];
   selectedTool: string | null;
+  statuses: Record<string, ToolVerificationStatus | undefined>;
+  isRunningAll: boolean;
+  isBusy: boolean;
   onSelectTool: (tool: string) => void;
+  onRunAllVerifications: () => void;
 };
 
 export const DetectedToolsSection = ({
   tools,
   selectedTool,
+  statuses,
+  isRunningAll,
+  isBusy,
   onSelectTool,
+  onRunAllVerifications,
 }: DetectedToolsSectionProps) => {
   return (
     <aside className="inspect-tools-panel border-b border-border bg-background/70">
@@ -28,6 +46,22 @@ export const DetectedToolsSection = ({
         <div className="flex items-center justify-between px-3 pb-3">
           <h1 className="font-sans font-semibold">Detected tools</h1>
           <p className="text-muted-foreground">{tools.length} found</p>
+        </div>
+
+        <div className="px-3 pb-3 lg:px-0">
+          <Button
+            variant="outline"
+            onClick={onRunAllVerifications}
+            disabled={tools.length === 0 || isBusy}
+            className="h-9 w-full rounded-lg font-semibold disabled:cursor-wait"
+          >
+            {isRunningAll ? (
+              <Spinner className="size-4 text-primary" />
+            ) : (
+              <ListChecks className="size-4" aria-hidden="true" />
+            )}
+            {isRunningAll ? "Running all…" : "Run all verifications"}
+          </Button>
         </div>
 
         <nav
@@ -48,6 +82,7 @@ export const DetectedToolsSection = ({
           )}
           {tools.map((tool) => {
             const selected = selectedTool === tool.id;
+            const status = statuses[tool.id] ?? "idle";
 
             return (
               <Button
@@ -55,14 +90,37 @@ export const DetectedToolsSection = ({
                 variant="ghost"
                 onClick={() => onSelectTool(tool.id)}
                 aria-pressed={selected}
-                className={`h-auto w-[12.5rem] shrink-0 snap-start flex-col items-start justify-start whitespace-normal rounded-lg border-b-2 border-l-0 px-3 py-3 text-left text-base lg:w-full lg:border-b-0 lg:border-l-2 ${
+                className={`relative h-auto w-[12.5rem] shrink-0 snap-start flex-col items-start justify-start whitespace-normal rounded-lg border-b-2 border-l-0 px-3 py-3 text-left text-base lg:w-full lg:border-b-0 lg:border-l-2 ${
                   selected
                     ? "bg-accent/75 hover:bg-accent/90"
                     : "border-transparent hover:bg-muted"
                 }`}
               >
+                <span className="absolute right-3 top-3">
+                  {status === "running" ? (
+                    <Spinner
+                      className="size-4 text-primary"
+                      aria-label={`${tool.name} verification is running`}
+                    />
+                  ) : status === "passed" ? (
+                    <CheckCircle2
+                      className="size-4 text-emerald-600 dark:text-emerald-400"
+                      aria-label={`${tool.name} verification passed`}
+                    />
+                  ) : status === "failed" || status === "error" ? (
+                    <XCircle
+                      className="size-4 text-destructive"
+                      aria-label={`${tool.name} verification failed`}
+                    />
+                  ) : (
+                    <Circle
+                      className="size-4 text-muted-foreground/50"
+                      aria-label={`${tool.name} has not been verified`}
+                    />
+                  )}
+                </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block font-mono font-medium leading-6">
+                  <span className="block pr-7 font-mono font-medium leading-6">
                     {tool.name}
                   </span>
                   <span className="mt-1 hidden leading-6 text-muted-foreground lg:block">
@@ -70,9 +128,13 @@ export const DetectedToolsSection = ({
                   </span>
                   <span
                     className={`mt-1 block font-medium lg:mt-2 ${
-                      tool.result === "Violation found"
-                        ? "text-destructive"
-                        : "text-muted-foreground"
+                      status === "passed"
+                        ? "text-emerald-700 dark:text-emerald-400"
+                        : status === "failed" || status === "error"
+                          ? "text-destructive"
+                          : status === "running"
+                            ? "text-primary"
+                            : "text-muted-foreground"
                     }`}
                   >
                     {tool.result}

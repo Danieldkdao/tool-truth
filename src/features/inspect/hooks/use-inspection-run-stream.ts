@@ -20,6 +20,10 @@ type InspectionRunStreamState = {
   evidenceData: ExecutionEvidenceData | null;
   analysisData: ContractAnalysisData | null;
   toolDiscoveryError: string | null;
+  runError: {
+    code: "not_found" | "connection_failed";
+    message: string;
+  } | null;
   progress: Record<InspectionSection, SectionProgress>;
 };
 
@@ -30,6 +34,11 @@ type InspectionRunStreamAction =
     }
   | {
       type: "disconnected";
+    }
+  | {
+      type: "failed";
+      code: "not_found" | "connection_failed";
+      message: string;
     };
 
 const createInitialState = (): InspectionRunStreamState => {
@@ -39,6 +48,7 @@ const createInitialState = (): InspectionRunStreamState => {
     evidenceData: null,
     analysisData: null,
     toolDiscoveryError: null,
+    runError: null,
     progress: {
       tools: {
         value: 5,
@@ -76,6 +86,16 @@ const reduceInspectionRunStream = (
           },
         ]),
       ) as Record<InspectionSection, SectionProgress>,
+    };
+  }
+
+  if (action.type === "failed") {
+    return {
+      ...state,
+      runError: {
+        code: action.code,
+        message: action.message,
+      },
     };
   }
 
@@ -142,32 +162,86 @@ export const useInspectionRunStream = (runId: string) => {
   );
 
   useEffect(() => {
-    const source = new EventSource(
-      `/api/inspection/${encodeURIComponent(runId)}/events`,
-    );
+    const controller = new AbortController();
+    let source: EventSource | null = null;
 
-    const handleInspectionEvent = (message: MessageEvent<string>) => {
-      let event: InspectionStreamEvent;
-
+    const connect = async () => {
       try {
-        event = JSON.parse(message.data) as InspectionStreamEvent;
-      } catch {
-        return;
-      }
+        const response = await fetch(
+          `/api/inspection/${encodeURIComponent(runId)}`,
+          {
+            cache: "no-store",
+            signal: controller.signal,
+          },
+        );
 
-      dispatch({ type: "event", event });
+        if (!response.ok) {
+          let message = "This inspection run could not be opened.";
 
-      if (event.kind === "run.completed") {
-        source.close();
+          try {
+            const body = (await response.json()) as { error?: unknown };
+            if (typeof body.error === "string") {
+              message = body.error;
+            }
+          } catch {
+            // Keep the safe fallback message when the response is not JSON.
+          }
+
+          dispatch({
+            type: "failed",
+            code: response.status === 404 ? "not_found" : "connection_failed",
+            message,
+          });
+          return;
+        }
+
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        source = new EventSource(
+          `/api/inspection/${encodeURIComponent(runId)}/events`,
+        );
+
+        const handleInspectionEvent = (message: MessageEvent<string>) => {
+          let event: InspectionStreamEvent;
+
+          try {
+            event = JSON.parse(message.data) as InspectionStreamEvent;
+          } catch {
+            return;
+          }
+
+          dispatch({ type: "event", event });
+
+          if (event.kind === "run.completed") {
+            source?.close();
+          }
+        };
+
+        source.addEventListener("inspection", handleInspectionEvent);
+        source.onerror = () => dispatch({ type: "disconnected" });
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        dispatch({
+          type: "failed",
+          code: "connection_failed",
+          message:
+            error instanceof Error
+              ? error.message
+              : "This inspection run could not be opened.",
+        });
       }
     };
 
-    source.addEventListener("inspection", handleInspectionEvent);
-    source.onerror = () => dispatch({ type: "disconnected" });
+    void connect();
 
     return () => {
-      source.removeEventListener("inspection", handleInspectionEvent);
-      source.close();
+      controller.abort();
+      source?.close();
     };
   }, [runId]);
 

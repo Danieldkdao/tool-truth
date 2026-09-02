@@ -13,6 +13,7 @@ export type InspectionErrorStateProps = {
   homeHref?: string;
   homeLabel?: string;
   retryLabel?: string;
+  showRetry?: boolean;
   onRetry?: () => void;
 };
 
@@ -23,6 +24,7 @@ export const InspectionErrorState = ({
   homeHref = "/",
   homeLabel = "Back to home",
   retryLabel = "Try again",
+  showRetry = true,
   onRetry,
 }: InspectionErrorStateProps) => {
   const retry = () => {
@@ -82,15 +84,17 @@ export const InspectionErrorState = ({
             {homeLabel}
           </Link>
 
-          <Button
-            type="button"
-            size="lg"
-            onClick={retry}
-            className="min-h-12 rounded-lg px-5 text-base font-semibold"
-          >
-            <RefreshCw className="size-4" aria-hidden="true" />
-            {retryLabel}
-          </Button>
+          {showRetry ? (
+            <Button
+              type="button"
+              size="lg"
+              onClick={retry}
+              className="min-h-12 rounded-lg px-5 text-base font-semibold"
+            >
+              <RefreshCw className="size-4" aria-hidden="true" />
+              {retryLabel}
+            </Button>
+          ) : null}
         </div>
       </section>
     </main>

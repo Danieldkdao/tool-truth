@@ -53,3 +53,34 @@ export type InspectionStreamEvent =
   | {
       kind: "run.completed";
     };
+
+export type VerificationStreamEvent =
+  | {
+      kind: "probe.connected";
+      probeId: string;
+      toolId: string;
+    }
+  | {
+      kind: "section.progress";
+      section: "evidence" | "analysis";
+      progress: SectionProgress;
+    }
+  | {
+      kind: "evidence.ready";
+      toolId: string;
+      data: ExecutionEvidenceData;
+    }
+  | {
+      kind: "analysis.ready";
+      toolId: string;
+      data: ContractAnalysisData;
+    }
+  | {
+      kind: "probe.failed";
+      toolId: string;
+      message: string;
+    }
+  | {
+      kind: "probe.completed";
+      toolId: string;
+    };

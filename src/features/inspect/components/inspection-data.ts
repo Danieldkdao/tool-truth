@@ -1,10 +1,13 @@
-export type ToolKey =
-  | "preview_order"
-  | "check_inventory"
-  | "summarize_reviews"
-  | "estimate_shipping";
+export type ToolKey = string;
 
-export type EvidenceTab = "Timeline" | "State diff" | "Network";
+export type ToolVerificationStatus =
+  | "idle"
+  | "running"
+  | "passed"
+  | "failed"
+  | "error";
+
+export type EvidenceTab = "Timeline" | "State diff" | "Network" | "Logs";
 
 export type Finding = {
   title: string;
@@ -12,6 +15,7 @@ export type Finding = {
   observed: string;
   parameter: string;
   value: string;
+  severity?: "info" | "warning" | "critical";
 };
 
 export type DetectedTool = {
@@ -49,15 +53,24 @@ export type NetworkEntry = {
   duration: string;
 };
 
+export type EvidenceLogEntry = {
+  time: string;
+  source: "stagehand" | "browser" | "runtime" | "tooltruth" | "ai";
+  level: "debug" | "info" | "warning" | "error";
+  message: string;
+};
+
 export type ExecutionEvidenceData = {
   runLabel: string;
   timeline: TimelineEntry[];
   stateChanges: StateChange[];
   network: NetworkEntry[];
+  logs: EvidenceLogEntry[];
 };
 
 export type ContractAnalysisData = {
-  findings: Record<ToolKey, Finding>;
+  findings: Record<string, Finding>;
+  verdict: "pending" | "passed" | "failed" | "error";
   unexpectedStateChanges: number;
   sandboxLabel: string;
   suggestedRepair: string;
@@ -171,10 +184,19 @@ export const executionEvidence: ExecutionEvidenceData = {
       duration: "164 ms",
     },
   ],
+  logs: [
+    {
+      time: "00:01.142",
+      source: "tooltruth",
+      level: "info",
+      message: "Invoked preview_order in the isolated browser.",
+    },
+  ],
 };
 
 export const contractAnalysis: ContractAnalysisData = {
   findings,
+  verdict: "failed",
   unexpectedStateChanges: 3,
   sandboxLabel: "Clean sandbox",
   suggestedRepair:

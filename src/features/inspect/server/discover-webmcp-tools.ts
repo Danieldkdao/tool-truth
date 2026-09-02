@@ -1,10 +1,13 @@
 import "server-only";
 
-import { Stagehand, type WebMCPTool } from "@browserbasehq/stagehand";
+import type { WebMCPTool } from "@browserbasehq/stagehand";
 
-import { serverEnv } from "@/data/env/server";
 import type { DetectedTool } from "@/features/inspect/components/inspection-data";
 import type { SectionProgress } from "@/features/inspect/components/inspection-stream";
+import {
+  createInspectionBrowser,
+  getInspectionBrowserLabel,
+} from "@/features/inspect/server/stagehand-browser";
 import { validateInspectionUrl } from "@/features/inspect/server/validate-inspection-url";
 
 const NAVIGATION_TIMEOUT_MS = 20_000;
@@ -39,53 +42,18 @@ const toDetectedTool = (tool: WebMCPTool): DetectedTool => {
   };
 };
 
-const createDiscoveryBrowser = () => {
-  const sharedOptions = {
-    disableAPI: true,
-    disablePino: true,
-    verbose: 0 as const,
-  };
-
-  if (serverEnv.NODE_ENV !== "production") {
-    return new Stagehand({
-      ...sharedOptions,
-      env: "LOCAL",
-      localBrowserLaunchOptions: {
-        headless: true,
-        viewport: { width: 1440, height: 900 },
-      },
-    });
-  }
-
-  return new Stagehand({
-    ...sharedOptions,
-    env: "BROWSERBASE",
-    apiKey: serverEnv.BROWSERBASE_API_KEY,
-    browserbaseSessionCreateParams: {
-      browserSettings: {
-        blockAds: true,
-        recordSession: false,
-        viewport: { width: 1440, height: 900 },
-      },
-    },
-  });
-};
-
 export const discoverWebMcpTools = async (
   targetUrl: string,
   reportProgress: DiscoveryProgressReporter,
 ) => {
   reportProgress({
     value: 24,
-    message:
-      serverEnv.NODE_ENV === "production"
-        ? "Starting an isolated discovery browser"
-        : "Starting a local discovery browser",
+    message: `Starting ${getInspectionBrowserLabel().toLowerCase()}`,
   });
 
   await validateInspectionUrl(targetUrl);
 
-  const stagehand = createDiscoveryBrowser();
+  const stagehand = createInspectionBrowser(() => undefined);
 
   try {
     await stagehand.init();
