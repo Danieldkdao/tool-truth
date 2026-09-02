@@ -11,6 +11,7 @@ import { Spinner } from "@/components/ui/spinner";
 import type {
   BrowserPreviewData,
   ToolKey,
+  ToolVerificationStatus,
 } from "@/features/inspect/components/inspection-data";
 import type { SectionProgress } from "@/features/inspect/components/inspection-stream";
 
@@ -114,7 +115,48 @@ export const BrowserPreviewSection = ({
   );
 };
 
-export const BrowserPreviewLocalPlaceholder = () => {
+type BrowserPreviewLocalPlaceholderProps = {
+  toolName?: string;
+  verificationStatus?: ToolVerificationStatus;
+};
+
+const getLocalBrowserPreviewCopy = (
+  toolName: string | undefined,
+  verificationStatus: ToolVerificationStatus | undefined,
+) => {
+  const selectedToolLabel = toolName ?? "the selected tool";
+
+  if (verificationStatus === "running") {
+    return {
+      title: "Verification is running",
+      description: `ToolTruth is checking ${selectedToolLabel} in the retained local browser and collecting its evidence.`,
+    };
+  }
+
+  if (
+    verificationStatus === "passed" ||
+    verificationStatus === "failed" ||
+    verificationStatus === "error"
+  ) {
+    return {
+      title: "Browser evidence runs locally",
+      description:
+        "ToolTruth keeps one disposable local browser open from discovery through verification. Live View will appear here when the runner is switched to Browserbase.",
+    };
+  }
+
+  return {
+    title: "Verification hasn’t started",
+    description: `Run verification for ${selectedToolLabel} to begin the browser check and collect evidence for its Live View.`,
+  };
+};
+
+export const BrowserPreviewLocalPlaceholder = ({
+  toolName,
+  verificationStatus,
+}: BrowserPreviewLocalPlaceholderProps) => {
+  const copy = getLocalBrowserPreviewCopy(toolName, verificationStatus);
+
   return (
     <div className="inspect-browser-frame mx-4 my-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-foreground/15 bg-card shadow-[0_16px_44px_-24px_oklch(0.22_0.02_260/0.38)] sm:mx-5 sm:my-5">
       <div className="border-b border-border bg-muted/75 px-3 py-3 sm:px-4">
@@ -130,14 +172,13 @@ export const BrowserPreviewLocalPlaceholder = () => {
       </div>
 
       <div className="inspect-browser flex min-h-[31rem] flex-1 items-center justify-center bg-card p-8">
-        <div className="max-w-md text-center">
+        <div className="max-w-md text-center" aria-live="polite">
           <LockKeyhole className="mx-auto size-7 text-primary" aria-hidden="true" />
           <h2 className="mt-5 font-sans text-2xl font-semibold">
-            Browser evidence runs locally
+            {copy.title}
           </h2>
           <p className="mt-3 leading-7 text-muted-foreground">
-            ToolTruth opens a disposable local browser for each probe. Live View
-            will appear here when the runner is switched to Browserbase.
+            {copy.description}
           </p>
         </div>
       </div>

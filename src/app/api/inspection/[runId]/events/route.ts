@@ -1,9 +1,12 @@
 import type { InspectionStreamEvent } from "@/features/inspect/components/inspection-stream";
 import { discoverWebMcpTools } from "@/features/inspect/server/discover-webmcp-tools";
 import {
+  disposeInspectionBrowserSession,
   getInspectionRun,
+  getOrCreateInspectionBrowserSession,
   getOrCreateToolDiscovery,
 } from "@/features/inspect/server/inspection-run-store";
+import { openInspectionBrowserSession } from "@/features/inspect/server/inspection-browser-session";
 import type { ParamsId } from "@/lib/types";
 
 const encodeEvent = (
@@ -60,10 +63,18 @@ export const GET = async (
         },
       });
 
-      void getOrCreateToolDiscovery(run, () =>
-        discoverWebMcpTools(run.targetUrl, (progress) => {
-          send({ kind: "section.progress", section: "tools", progress });
-        }),
+      const browserSession = getOrCreateInspectionBrowserSession(
+        run,
+        openInspectionBrowserSession,
+      );
+      void getOrCreateToolDiscovery(run, async () =>
+        discoverWebMcpTools(
+          run.targetUrl,
+          (progress) => {
+            send({ kind: "section.progress", section: "tools", progress });
+          },
+          await browserSession,
+        ),
       )
         .then(async (tools) => {
           for (const tool of tools) {
@@ -74,6 +85,7 @@ export const GET = async (
           send({ kind: "tools.ready", data: tools });
         })
         .catch((error: unknown) => {
+          disposeInspectionBrowserSession(run);
           console.error("WebMCP tool discovery failed", {
             runId,
             targetHostname: run.targetHostname,

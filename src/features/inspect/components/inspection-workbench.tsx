@@ -250,7 +250,10 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
   );
 
   const browserPanel = tools ? (
-    <BrowserPreviewLocalPlaceholder />
+    <BrowserPreviewLocalPlaceholder
+      toolName={activeTool?.name}
+      verificationStatus={activeVerification?.status}
+    />
   ) : (
     <BrowserPreviewSectionProgress progress={progress.browser} />
   );

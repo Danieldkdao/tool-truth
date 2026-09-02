@@ -1,5 +1,6 @@
 import type { VerificationStreamEvent } from "@/features/inspect/components/inspection-stream";
 import {
+  getInspectionBrowserSession,
   getInspectionProbe,
   getInspectionRun,
   getOrStartInspectionProbe,
@@ -47,6 +48,17 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
     );
   }
 
+  const browserSession = getInspectionBrowserSession(run);
+  if (!browserSession) {
+    return Response.json(
+      {
+        error:
+          "The browser session for this inspection is no longer available. Start a new inspection.",
+      },
+      { status: 409, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+
   const encoder = new TextEncoder();
   let eventId = 0;
   let closed = false;
@@ -88,6 +100,7 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
             probeId: probe.id,
             targetUrl: run.targetUrl,
             selectedTool,
+            browserSession: await browserSession,
             report: (event) => publishInspectionProbeEvent(probe, event),
           });
         } catch (error) {

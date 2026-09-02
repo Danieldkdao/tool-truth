@@ -4,10 +4,8 @@ import type { WebMCPTool } from "@browserbasehq/stagehand";
 
 import type { DetectedTool } from "@/features/inspect/components/inspection-data";
 import type { SectionProgress } from "@/features/inspect/components/inspection-stream";
-import {
-  createInspectionBrowser,
-  getInspectionBrowserLabel,
-} from "@/features/inspect/server/stagehand-browser";
+import type { InspectionBrowserSession } from "@/features/inspect/server/inspection-browser-session";
+import { getInspectionBrowserLabel } from "@/features/inspect/server/stagehand-browser";
 import { validateInspectionUrl } from "@/features/inspect/server/validate-inspection-url";
 
 const NAVIGATION_TIMEOUT_MS = 20_000;
@@ -45,6 +43,7 @@ const toDetectedTool = (tool: WebMCPTool): DetectedTool => {
 export const discoverWebMcpTools = async (
   targetUrl: string,
   reportProgress: DiscoveryProgressReporter,
+  browserSession: InspectionBrowserSession,
 ) => {
   reportProgress({
     value: 24,
@@ -53,17 +52,12 @@ export const discoverWebMcpTools = async (
 
   await validateInspectionUrl(targetUrl);
 
-  const stagehand = createInspectionBrowser(() => undefined);
-
-  try {
-    await stagehand.init();
-
+  return browserSession.runExclusive(async ({ page }) => {
     reportProgress({
       value: 52,
       message: "Loading the submitted website",
     });
 
-    const page = stagehand.context.pages()[0];
     await page.goto(targetUrl, {
       waitUntil: "load",
       timeoutMs: NAVIGATION_TIMEOUT_MS,
@@ -93,7 +87,5 @@ export const discoverWebMcpTools = async (
     });
 
     return tools.map(toDetectedTool);
-  } finally {
-    await stagehand.close();
-  }
+  });
 };

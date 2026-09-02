@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 
 import type { DetectedTool } from "@/features/inspect/components/inspection-data";
 import type { VerificationStreamEvent } from "@/features/inspect/components/inspection-stream";
+import type { InspectionBrowserSession } from "@/features/inspect/server/inspection-browser-session";
 import type { ValidatedInspectionTarget } from "@/features/inspect/server/validate-inspection-url";
 
 const RUN_TTL_MS = 60 * 60 * 1000;
@@ -30,6 +31,8 @@ export type InspectionRun = {
   resolvedAddresses: string[];
   createdAt: number;
   expiresAt: number;
+  browserSession?: Promise<InspectionBrowserSession>;
+  browserSessionExpiration?: NodeJS.Timeout;
   toolDiscovery?: Promise<DetectedTool[]>;
   probes: Map<string, InspectionProbe>;
 };
@@ -43,10 +46,30 @@ const inspectionRuns =
 
 globalForInspectionRuns.toolTruthInspectionRuns = inspectionRuns;
 
+const closeRunBrowserSession = (run: InspectionRun) => {
+  if (run.browserSessionExpiration) {
+    clearTimeout(run.browserSessionExpiration);
+    run.browserSessionExpiration = undefined;
+  }
+
+  const session = run.browserSession;
+  run.browserSession = undefined;
+  if (session) {
+    void session
+      .then((browserSession) => browserSession.close())
+      .catch(() => undefined);
+  }
+};
+
+const deleteInspectionRun = (runId: string, run: InspectionRun) => {
+  inspectionRuns.delete(runId);
+  closeRunBrowserSession(run);
+};
+
 const deleteExpiredRuns = (now = Date.now()) => {
   for (const [runId, run] of inspectionRuns) {
     if (run.expiresAt <= now) {
-      inspectionRuns.delete(runId);
+      deleteInspectionRun(runId, run);
     }
   }
 };
@@ -93,11 +116,35 @@ export const getInspectionRun = (runId: string) => {
   }
 
   if (run.expiresAt <= Date.now()) {
-    inspectionRuns.delete(runId);
+    deleteInspectionRun(runId, run);
     return undefined;
   }
 
   return run;
+};
+
+export const getOrCreateInspectionBrowserSession = (
+  run: InspectionRun,
+  create: () => Promise<InspectionBrowserSession>,
+) => {
+  if (!run.browserSession) {
+    run.browserSession = create();
+    const expirationDelay = Math.max(0, run.expiresAt - Date.now());
+    run.browserSessionExpiration = setTimeout(() => {
+      if (inspectionRuns.get(run.id) === run) deleteInspectionRun(run.id, run);
+    }, expirationDelay);
+    run.browserSessionExpiration.unref?.();
+  }
+
+  return run.browserSession;
+};
+
+export const getInspectionBrowserSession = (run: InspectionRun) => {
+  return run.browserSession;
+};
+
+export const disposeInspectionBrowserSession = (run: InspectionRun) => {
+  closeRunBrowserSession(run);
 };
 
 export const getOrCreateToolDiscovery = (
