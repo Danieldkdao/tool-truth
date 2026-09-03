@@ -11,12 +11,14 @@ import type {
 } from "@browserbasehq/stagehand";
 
 import type {
+  BrowserbaseSessionStatistics,
   DetectedTool,
   EvidenceLogEntry,
   ExecutionEvidenceData,
   NetworkEntry,
   StateChange,
   TimelineEntry,
+  VerificationStatistics,
 } from "@/features/inspect/components/inspection-data";
 import type { VerificationStreamEvent } from "@/features/inspect/components/inspection-stream";
 import type {
@@ -479,6 +481,32 @@ const captureSnapshot = async (
   } satisfies BrowserSnapshot;
 };
 
+const toBrowserbaseStatistics = (
+  lifecycle: ReturnType<InspectionBrowserSession["getStatistics"]>["browserbaseLifecycle"],
+): BrowserbaseSessionStatistics | null => {
+  if (!lifecycle?.sessionId) return null;
+
+  const durationMs =
+    lifecycle.durationMs ??
+    Math.max(
+      0,
+      (lifecycle.endedAt ?? Date.now()) -
+        (lifecycle.startedAt ?? lifecycle.createdAt),
+    );
+
+  return {
+    sessionId: lifecycle.sessionId,
+    durationMs,
+    region: lifecycle.region,
+    status: lifecycle.status,
+    providerStatus: lifecycle.providerStatus,
+    terminationReason: lifecycle.terminationReason,
+    proxyBytes: lifecycle.proxyBytes,
+    liveViewAvailable: lifecycle.liveViewAvailable,
+    replayAvailable: lifecycle.replayAvailable,
+  };
+};
+
 export const runToolVerification = async ({
   runId,
   probeId,
@@ -492,7 +520,10 @@ export const runToolVerification = async ({
   throwIfAborted(signal);
   const startedAt = Date.now();
   const logs: EvidenceLogEntry[] = [];
+  const operationalLogs: EvidenceLogEntry[] = [];
   const timeline: TimelineEntry[] = [];
+  let discoveryDurationMs = 0;
+  let navigationDurationMs: number | null = null;
   const recordTimeline = (event: string, detail: string) => {
     timeline.push([formatElapsed(startedAt), event, sanitizeText(detail, 800)]);
   };
@@ -503,6 +534,18 @@ export const runToolVerification = async ({
       message,
     });
   };
+  const recordOperationalLog = (
+    source: EvidenceLogEntry["source"],
+    message: string,
+    level: EvidenceLogEntry["level"] = "info",
+  ) => {
+    addLog(operationalLogs, startedAt, { source, level, message });
+  };
+  const initialSessionStatistics = browserSession.getStatistics();
+  recordOperationalLog(
+    "tooltruth",
+    `${initialSessionStatistics.provider === "browserbase" ? "Browserbase" : "Local browser"} startup completed in ${initialSessionStatistics.startupDurationMs} ms.`,
+  );
 
   report({
     kind: "section.progress",
@@ -556,23 +599,35 @@ export const runToolVerification = async ({
         progress: { value: 24, message: "Loading the target page" },
       });
 
-      let liveTools = await page.listWebMCPTools({
-        timeoutMs: TOOL_DISCOVERY_TIMEOUT_MS,
-      });
+      const discoverTools = async () => {
+        const discoveryStartedAt = Date.now();
+        try {
+          return await page.listWebMCPTools({
+            timeoutMs: TOOL_DISCOVERY_TIMEOUT_MS,
+          });
+        } finally {
+          discoveryDurationMs += Date.now() - discoveryStartedAt;
+        }
+      };
+
+      let liveTools = await discoverTools();
       throwIfAborted(signal);
       let liveTool = selectLiveTool(liveTools, selectedTool);
 
       if (!liveTool) {
-        await page.goto(targetUrl, {
-          waitUntil: "load",
-          timeoutMs: NAVIGATION_TIMEOUT_MS,
-        });
+        const navigationStartedAt = Date.now();
+        try {
+          await page.goto(targetUrl, {
+            waitUntil: "load",
+            timeoutMs: NAVIGATION_TIMEOUT_MS,
+          });
+        } finally {
+          navigationDurationMs = Date.now() - navigationStartedAt;
+        }
         throwIfAborted(signal);
         await validateInspectionUrl(page.url());
         await evidenceObserver.refresh();
-        liveTools = await page.listWebMCPTools({
-          timeoutMs: TOOL_DISCOVERY_TIMEOUT_MS,
-        });
+        liveTools = await discoverTools();
         throwIfAborted(signal);
         liveTool = selectLiveTool(liveTools, selectedTool);
       }
@@ -638,9 +693,10 @@ export const runToolVerification = async ({
           errorText: error instanceof Error ? error.message : String(error),
         };
       }
+      const invocationDurationMs = Date.now() - invocationStartedAt;
       recordTimeline(
         "Tool completed",
-        `${result.status} in ${Date.now() - invocationStartedAt} ms · ${stringifyCompact(result.output ?? result.errorText, 500)}`,
+        `${result.status} in ${invocationDurationMs} ms · ${stringifyCompact(result.output ?? result.errorText, 500)}`,
       );
 
       await page.waitForTimeout(350);
@@ -694,11 +750,13 @@ export const runToolVerification = async ({
       report({ kind: "evidence.ready", toolId: selectedTool.id, data: evidence });
       return {
         evidence,
+        invocationDurationMs,
         observedMutations,
         requestCount: after.network.length,
         result,
         stateChanges,
         tool,
+        toolCount: liveTools.length,
         toolInput,
       };
     } finally {
@@ -709,6 +767,21 @@ export const runToolVerification = async ({
 
   await releaseBrowser();
   throwIfAborted(signal);
+
+  const releasedSessionStatistics = browserSession.getStatistics();
+  const browserbaseStatistics = toBrowserbaseStatistics(
+    releasedSessionStatistics.browserbaseLifecycle,
+  );
+  if (browserbaseStatistics) {
+    recordOperationalLog(
+      "browserbase",
+      `Session ${browserbaseStatistics.sessionId} ended with status ${browserbaseStatistics.status} after ${browserbaseStatistics.durationMs} ms${browserbaseStatistics.providerStatus ? `; Browserbase reported ${browserbaseStatistics.providerStatus}` : ""}.`,
+    );
+    recordOperationalLog(
+      "browserbase",
+      `Region ${browserbaseStatistics.region ?? "unavailable"}; proxy bandwidth ${browserbaseStatistics.proxyBytes === null ? "not applicable or unavailable" : `${browserbaseStatistics.proxyBytes} bytes`}; Live View ${browserbaseStatistics.liveViewAvailable ? "available" : "unavailable"}; replay ${browserbaseStatistics.replayAvailable === null ? "availability unknown" : browserbaseStatistics.replayAvailable ? "available" : "processing or unavailable"}.`,
+    );
+  }
 
   report({
     kind: "section.progress",
@@ -722,6 +795,7 @@ export const runToolVerification = async ({
   const mutatingRequests = captured.observedMutations.map(
     (entry) => `${entry.method} ${safeUrlPath(entry.url)} · ${entry.status}`,
   );
+  const analysisStartedAt = Date.now();
   const analysis = await analyzeToolVerification(
     {
       tool: captured.tool,
@@ -743,9 +817,34 @@ export const runToolVerification = async ({
     recordAiActivity,
     signal,
   );
+  const analysisDurationMs = Date.now() - analysisStartedAt;
   throwIfAborted(signal);
 
+  const totalDurationMs = Date.now() - startedAt;
+  recordOperationalLog(
+    "tooltruth",
+    `Verification measurements completed in ${totalDurationMs} ms with ${captured.requestCount} requests and ${captured.observedMutations.length} mutating requests.`,
+  );
+  const statistics: VerificationStatistics = {
+    provider: releasedSessionStatistics.provider,
+    browserStartupDurationMs: releasedSessionStatistics.startupDurationMs,
+    discoveryDurationMs,
+    navigationDurationMs,
+    invocationDurationMs: captured.invocationDurationMs,
+    analysisDurationMs,
+    totalDurationMs,
+    toolCount: captured.toolCount,
+    requestCount: captured.requestCount,
+    mutationCount: captured.observedMutations.length,
+    stateChangeCount: captured.stateChanges.length,
+    warningCount: logs.filter((entry) => entry.level === "warning").length,
+    errorCount: logs.filter((entry) => entry.level === "error").length,
+    finalStatus: "completed",
+    browserbase: browserbaseStatistics,
+    operationalLogs,
+  };
   captured.evidence.logs = [...logs];
+  captured.evidence.statistics = statistics;
   report({
     kind: "evidence.ready",
     toolId: selectedTool.id,
@@ -763,5 +862,6 @@ export const runToolVerification = async ({
     stateChangeCount: captured.stateChanges.length,
     requestCount: captured.requestCount,
     logCount: logs.length,
+    browserbase: browserbaseStatistics,
   });
 };

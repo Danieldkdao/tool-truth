@@ -5,6 +5,7 @@ import { Stagehand } from "@browserbasehq/stagehand";
 import { serverEnv } from "@/data/env/server";
 import {
   createSharedStagehandOptions,
+  type BrowserbaseSessionMetadata,
   INSPECTION_VIEWPORT,
   type InspectionBrowserHandle,
   InspectionBrowserStartupError,
@@ -15,10 +16,115 @@ const BROWSERBASE_SESSION_CREATE_TIMEOUT_MS = 30_000;
 const BROWSERBASE_INITIALIZATION_TIMEOUT_MS = 45_000;
 const BROWSERBASE_SESSION_TIMEOUT_SECONDS = 5 * 60;
 const BROWSERBASE_LIVE_VIEW_TIMEOUT_MS = 10_000;
+const BROWSERBASE_METADATA_TIMEOUT_MS = 10_000;
 const BROWSERBASE_SESSION_RELEASE_TIMEOUT_MS = 10_000;
 
 type BrowserbaseLiveViewResponse = {
   debuggerFullscreenUrl?: unknown;
+};
+
+type BrowserbaseSessionResponse = {
+  startedAt?: unknown;
+  endedAt?: unknown;
+  expiresAt?: unknown;
+  status?: unknown;
+  proxyBytes?: unknown;
+  region?: unknown;
+};
+
+type BrowserbaseReplayResponse = {
+  pages?: unknown;
+};
+
+const toTimestamp = (value: unknown) => {
+  if (typeof value !== "string") return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
+};
+
+const requestBrowserbaseApi = async (
+  path: string,
+  apiKey: string,
+  timeoutMessage: string,
+) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    BROWSERBASE_METADATA_TIMEOUT_MS,
+  );
+  timeout.unref?.();
+
+  try {
+    return await fetch(`https://api.browserbase.com${path}`, {
+      headers: { "X-BB-API-Key": apiKey },
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  } catch (error) {
+    throw new Error(
+      error instanceof DOMException && error.name === "AbortError"
+        ? timeoutMessage
+        : "Browserbase metadata could not be reached.",
+      { cause: error },
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const requestBrowserbaseSessionMetadata = async (
+  sessionId: string,
+  apiKey: string,
+): Promise<BrowserbaseSessionMetadata> => {
+  const response = await requestBrowserbaseApi(
+    `/v1/sessions/${encodeURIComponent(sessionId)}`,
+    apiKey,
+    "Browserbase session metadata retrieval timed out.",
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Browserbase session metadata request returned ${response.status}.`,
+    );
+  }
+
+  const payload = (await response.json()) as BrowserbaseSessionResponse;
+  const proxyBytes = payload.proxyBytes;
+
+  return {
+    startedAt: toTimestamp(payload.startedAt),
+    endedAt: toTimestamp(payload.endedAt),
+    expiresAt: toTimestamp(payload.expiresAt),
+    status: typeof payload.status === "string" ? payload.status : null,
+    proxyBytes:
+      typeof proxyBytes === "number" &&
+      Number.isFinite(proxyBytes) &&
+      proxyBytes >= 0
+        ? proxyBytes
+        : null,
+    region: typeof payload.region === "string" ? payload.region : null,
+  };
+};
+
+const requestBrowserbaseReplayAvailability = async (
+  sessionId: string,
+  apiKey: string,
+) => {
+  const response = await requestBrowserbaseApi(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/replays`,
+    apiKey,
+    "Browserbase replay availability retrieval timed out.",
+  );
+
+  if (response.status === 404) return false;
+  if (!response.ok) {
+    throw new Error(
+      `Browserbase replay availability request returned ${response.status}.`,
+    );
+  }
+
+  const payload = (await response.json()) as BrowserbaseReplayResponse;
+  return Array.isArray(payload.pages) && payload.pages.length > 0;
 };
 
 const withDeadline = async <T>(
@@ -211,6 +317,10 @@ export const createBrowserbaseInspectionBrowser = (
     closeEnvironment: async () => undefined,
     requestBrowserbaseLiveViewUrl: (sessionId) =>
       requestBrowserbaseLiveViewUrl(sessionId, apiKey),
+    requestBrowserbaseSessionMetadata: (sessionId) =>
+      requestBrowserbaseSessionMetadata(sessionId, apiKey),
+    requestBrowserbaseReplayAvailability: (sessionId) =>
+      requestBrowserbaseReplayAvailability(sessionId, apiKey),
     releaseBrowserbaseSession: async (sessionId) => {
       const controller = new AbortController();
       const timeout = setTimeout(

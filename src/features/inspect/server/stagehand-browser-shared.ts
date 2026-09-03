@@ -15,6 +15,15 @@ export type InspectionBrowserStartupReporter = (
   progress: InspectionBrowserStartupProgress,
 ) => void;
 
+export type BrowserbaseSessionMetadata = {
+  startedAt: number | null;
+  endedAt: number | null;
+  expiresAt: number | null;
+  status: string | null;
+  proxyBytes: number | null;
+  region: string | null;
+};
+
 export type InspectionBrowserHandle = {
   browser: Stagehand;
   provider: "local" | "browserbase";
@@ -22,6 +31,12 @@ export type InspectionBrowserHandle = {
   initialize: (reportStartup: InspectionBrowserStartupReporter) => Promise<void>;
   closeEnvironment: () => Promise<void>;
   requestBrowserbaseLiveViewUrl?: (sessionId: string) => Promise<string>;
+  requestBrowserbaseSessionMetadata?: (
+    sessionId: string,
+  ) => Promise<BrowserbaseSessionMetadata>;
+  requestBrowserbaseReplayAvailability?: (
+    sessionId: string,
+  ) => Promise<boolean>;
   releaseBrowserbaseSession?: (sessionId: string) => Promise<void>;
 };
 

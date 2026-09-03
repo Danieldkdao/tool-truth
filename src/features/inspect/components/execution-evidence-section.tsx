@@ -32,8 +32,27 @@ const evidenceTabs: EvidenceTab[] = [
   "State diff",
   "Network",
   "Logs",
+  "Statistics",
   "Replay",
 ];
+
+const formatDuration = (durationMs: number) => {
+  if (durationMs < 1_000) return `${durationMs} ms`;
+  if (durationMs < 60_000) return `${(durationMs / 1_000).toFixed(2)} s`;
+  return `${(durationMs / 60_000).toFixed(2)} min`;
+};
+
+const formatBytes = (bytes: number | null) => {
+  if (bytes === null) return "Not applicable or unavailable";
+  if (bytes < 1_024) return `${bytes} B`;
+  if (bytes < 1_048_576) return `${(bytes / 1_024).toFixed(1)} KB`;
+  return `${(bytes / 1_048_576).toFixed(2)} MB`;
+};
+
+const formatStatus = (value: string | null) => {
+  if (!value) return "Unavailable";
+  return value.replaceAll("_", " ").toLowerCase();
+};
 
 export const ExecutionEvidenceSection = ({
   data,
@@ -49,21 +68,21 @@ export const ExecutionEvidenceSection = ({
       onValueChange={(value) => onActiveTabChange(value as EvidenceTab)}
       className="inspect-evidence gap-0 border-t border-border bg-card"
     >
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border px-5 py-4 sm:px-6">
-        <div>
+      <div className="flex min-w-0 flex-col gap-4 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+        <div className="min-w-0 shrink-0">
           <h2 className="font-sans font-semibold">Execution evidence</h2>
           <p className="mt-1 text-muted-foreground">{data.runLabel}</p>
         </div>
         <TabsList
           aria-label="Evidence views"
-          className="h-auto rounded-lg bg-transparent! p-1"
+          className="scrollbar-none scroll-fade-x h-auto w-full min-w-0 max-w-full touch-pan-x flex-nowrap justify-start overflow-x-auto overscroll-x-contain rounded-lg bg-transparent! p-1 sm:w-auto"
         >
           {evidenceTabs.map((tab) => (
             <TabsTrigger
               key={tab}
               value={tab}
               disabled={tab === "Replay" && !replayAvailable}
-              className="cursor-pointer min-h-8 rounded-lg px-3 text-base font-medium data-active:bg-accent/70 data-active:text-foreground data-active:shadow-xs disabled:cursor-not-allowed disabled:opacity-45"
+              className="min-h-8 flex-none shrink-0 cursor-pointer rounded-lg px-3 text-base font-medium data-active:bg-accent/70 data-active:text-foreground data-active:shadow-xs disabled:cursor-not-allowed disabled:opacity-45"
             >
               {tab}
             </TabsTrigger>
@@ -71,7 +90,7 @@ export const ExecutionEvidenceSection = ({
         </TabsList>
       </div>
 
-      <div className="inspect-evidence-scroll max-h-[22rem] overflow-auto px-5 py-4 sm:px-6">
+      <div className="inspect-evidence-scroll scrollbar-none scroll-fade max-h-[22rem] overflow-auto px-5 py-4 sm:px-6">
         <TabsContent value="Timeline" className="text-base">
           {data.timeline.length === 0 && (
             <p className="py-6 text-muted-foreground">
@@ -182,6 +201,171 @@ export const ExecutionEvidenceSection = ({
           </ol>
         </TabsContent>
 
+        <TabsContent value="Statistics" className="space-y-5 text-base">
+          {!data.statistics && (
+            <p className="py-6 text-muted-foreground">
+              Verification statistics were not recorded for this probe.
+            </p>
+          )}
+          {data.statistics && (
+            <>
+              <div>
+                <h3 className="font-medium">Verification measurements</h3>
+                <dl className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  {[
+                    [
+                      "Browser provider",
+                      data.statistics.provider === "browserbase"
+                        ? "Browserbase"
+                        : "Local",
+                    ],
+                    ["Final status", data.statistics.finalStatus],
+                    [
+                      "Browser startup",
+                      formatDuration(
+                        data.statistics.browserStartupDurationMs,
+                      ),
+                    ],
+                    [
+                      "Tool discovery",
+                      formatDuration(data.statistics.discoveryDurationMs),
+                    ],
+                    [
+                      "Navigation",
+                      data.statistics.navigationDurationMs === null
+                        ? "Session already on target"
+                        : formatDuration(data.statistics.navigationDurationMs),
+                    ],
+                    [
+                      "Invocation",
+                      formatDuration(data.statistics.invocationDurationMs),
+                    ],
+                    [
+                      "Analysis",
+                      formatDuration(data.statistics.analysisDurationMs),
+                    ],
+                    ["Total", formatDuration(data.statistics.totalDurationMs)],
+                    ["Detected tools", String(data.statistics.toolCount)],
+                    ["Requests", String(data.statistics.requestCount)],
+                    ["Mutating requests", String(data.statistics.mutationCount)],
+                    ["State changes", String(data.statistics.stateChangeCount)],
+                    ["Warnings", String(data.statistics.warningCount)],
+                    ["Errors", String(data.statistics.errorCount)],
+                  ].map(([label, value]) => (
+                    <div
+                      key={label}
+                      className="rounded-lg border border-border p-3"
+                    >
+                      <dt className="text-muted-foreground">{label}</dt>
+                      <dd className="mt-1 font-mono font-medium">{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+
+              {data.statistics.browserbase && (
+                <div className="rounded-xl border border-border bg-muted/30 p-4">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <h3 className="font-medium">Browserbase session</h3>
+                    <p className="font-mono text-muted-foreground">
+                      {data.statistics.browserbase.sessionId}
+                    </p>
+                  </div>
+                  <dl className="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <div>
+                      <dt className="text-muted-foreground">Duration</dt>
+                      <dd className="mt-1 font-medium">
+                        {formatDuration(data.statistics.browserbase.durationMs)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Region</dt>
+                      <dd className="mt-1 font-medium">
+                        {data.statistics.browserbase.region ?? "Unavailable"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Session status</dt>
+                      <dd className="mt-1 font-medium capitalize">
+                        {formatStatus(data.statistics.browserbase.status)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">
+                        Browserbase API status
+                      </dt>
+                      <dd className="mt-1 font-medium capitalize">
+                        {formatStatus(
+                          data.statistics.browserbase.providerStatus,
+                        )}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Termination reason</dt>
+                      <dd className="mt-1 font-medium capitalize">
+                        {formatStatus(
+                          data.statistics.browserbase.terminationReason,
+                        )}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Proxy bandwidth</dt>
+                      <dd className="mt-1 font-medium">
+                        {formatBytes(data.statistics.browserbase.proxyBytes)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Live View</dt>
+                      <dd className="mt-1 font-medium">
+                        {data.statistics.browserbase.liveViewAvailable
+                          ? "Available during run"
+                          : "Unavailable"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Replay</dt>
+                      <dd className="mt-1 font-medium">
+                        {data.statistics.browserbase.replayAvailable === null
+                          ? "Availability unknown"
+                          : data.statistics.browserbase.replayAvailable
+                            ? "Available"
+                            : "Processing or unavailable"}
+                      </dd>
+                    </div>
+                  </dl>
+                  <p className="mt-4 border-l-2 border-primary/50 pl-3 text-muted-foreground">
+                    Browserbase metadata is operational context only. Region,
+                    bandwidth, Live View, and replay availability do not affect
+                    the behavioral contract verdict.
+                  </p>
+                </div>
+              )}
+
+              {data.statistics.operationalLogs.length > 0 && (
+                <div>
+                  <h3 className="font-medium">Operational log</h3>
+                  <ol className="mt-2 divide-y divide-border">
+                    {data.statistics.operationalLogs.map((entry, index) => (
+                      <li
+                        key={`${entry.time}-${entry.source}-${index}`}
+                        className="grid gap-1 py-3 sm:grid-cols-[6.5rem_7rem_1fr] sm:gap-4"
+                      >
+                        <time className="font-mono text-muted-foreground">
+                          {entry.time}
+                        </time>
+                        <p className="font-mono font-medium">{entry.source}</p>
+                        <p className="min-w-0 break-words text-muted-foreground">
+                          {entry.message}
+                        </p>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+            </>
+          )}
+        </TabsContent>
+
         <TabsContent value="Replay" className="text-base">
           {activeTab === "Replay" && replayAvailable && (
             <SessionReplayPlayer runId={runId} probeId={probeId} />
@@ -212,7 +396,7 @@ export const ExecutionEvidenceSectionEmpty = ({
           {error ? "The latest probe did not complete" : "No probe has run yet"}
         </p>
       </div>
-      <div className="inspect-evidence-scroll px-5 py-6 sm:px-6">
+      <div className="inspect-evidence-scroll scrollbar-none scroll-fade px-5 py-6 sm:px-6">
         <p
           className={
             error
@@ -252,7 +436,7 @@ export const ExecutionEvidenceSectionProgress = ({
         <p className="font-medium text-primary">Collecting live evidence</p>
       </div>
 
-      <div className="inspect-evidence-scroll px-5 py-5 sm:px-6">
+      <div className="inspect-evidence-scroll scrollbar-none scroll-fade px-5 py-5 sm:px-6">
         <Progress value={progress.value} className="gap-2">
           <ProgressLabel className="text-base leading-6">
             {progress.message}
@@ -284,7 +468,7 @@ export const ExecutionEvidenceSectionSkeleton = () => {
         <Skeleton className="h-10 w-64 rounded-lg" />
       </div>
 
-      <div className="inspect-evidence-scroll px-5 py-4 sm:px-6">
+      <div className="inspect-evidence-scroll scrollbar-none scroll-fade px-5 py-4 sm:px-6">
         {Array.from({ length: 4 }, (_, index) => (
           <div
             key={index}

@@ -12,6 +12,7 @@ export type EvidenceTab =
   | "State diff"
   | "Network"
   | "Logs"
+  | "Statistics"
   | "Replay";
 
 export type Finding = {
@@ -60,9 +61,46 @@ export type NetworkEntry = {
 
 export type EvidenceLogEntry = {
   time: string;
-  source: "stagehand" | "browser" | "runtime" | "tooltruth" | "ai";
+  source:
+    | "stagehand"
+    | "browser"
+    | "browserbase"
+    | "runtime"
+    | "tooltruth"
+    | "ai";
   level: "debug" | "info" | "warning" | "error";
   message: string;
+};
+
+export type BrowserbaseSessionStatistics = {
+  sessionId: string;
+  durationMs: number;
+  region: string | null;
+  status: string;
+  providerStatus: string | null;
+  terminationReason: string | null;
+  proxyBytes: number | null;
+  liveViewAvailable: boolean;
+  replayAvailable: boolean | null;
+};
+
+export type VerificationStatistics = {
+  provider: "local" | "browserbase";
+  browserStartupDurationMs: number;
+  discoveryDurationMs: number;
+  navigationDurationMs: number | null;
+  invocationDurationMs: number;
+  analysisDurationMs: number;
+  totalDurationMs: number;
+  toolCount: number;
+  requestCount: number;
+  mutationCount: number;
+  stateChangeCount: number;
+  warningCount: number;
+  errorCount: number;
+  finalStatus: "completed";
+  browserbase: BrowserbaseSessionStatistics | null;
+  operationalLogs: EvidenceLogEntry[];
 };
 
 export type EvidenceScreenshot = {
@@ -77,6 +115,7 @@ export type ExecutionEvidenceData = {
   stateChanges: StateChange[];
   network: NetworkEntry[];
   logs: EvidenceLogEntry[];
+  statistics?: VerificationStatistics;
 };
 
 export type ContractAnalysisData = {

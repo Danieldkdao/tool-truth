@@ -144,7 +144,7 @@ const DesktopWorkbenchLayout = ({
           maxSize="30rem"
           groupResizeBehavior="preserve-pixel-size"
         >
-          <div className="h-full min-h-0 overflow-y-auto [&>.inspect-analysis]:min-h-full [&>.inspect-analysis]:border-t-0 [&>.inspect-analysis]:border-l-0">
+          <div className="scrollbar-none scroll-fade h-full min-h-0 overflow-y-auto [&>.inspect-analysis]:min-h-full [&>.inspect-analysis]:border-t-0 [&>.inspect-analysis]:border-l-0">
             {analysisPanel}
           </div>
         </ResizablePanel>

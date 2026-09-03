@@ -7,4 +7,5 @@ export type EvidenceView =
   | "state_diff"
   | "network"
   | "logs"
+  | "statistics"
   | "replay";

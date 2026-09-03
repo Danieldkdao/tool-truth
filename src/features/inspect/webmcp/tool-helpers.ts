@@ -13,6 +13,7 @@ const EVIDENCE_TABS_BY_VIEW: Record<EvidenceView, EvidenceTab> = {
   state_diff: "State diff",
   network: "Network",
   logs: "Logs",
+  statistics: "Statistics",
   replay: "Replay",
 };
 
@@ -21,6 +22,7 @@ const EVIDENCE_VIEWS_BY_TAB: Record<EvidenceTab, EvidenceView> = {
   "State diff": "state_diff",
   Network: "network",
   Logs: "logs",
+  Statistics: "statistics",
   Replay: "replay",
 };
 
@@ -133,7 +135,7 @@ export const readEvidenceTab = (input: Record<string, unknown>) => {
     !(evidenceView in EVIDENCE_TABS_BY_VIEW)
   ) {
     throw new Error(
-      "evidenceView must be timeline, state_diff, network, logs, or replay.",
+      "evidenceView must be timeline, state_diff, network, logs, statistics, or replay.",
     );
   }
 
