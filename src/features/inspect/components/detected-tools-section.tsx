@@ -42,7 +42,7 @@ export const DetectedToolsSection = ({
 }: DetectedToolsSectionProps) => {
   return (
     <aside className="inspect-tools-panel border-b border-border bg-background/70">
-      <section className="inspect-tools-scroll px-3 py-4 lg:py-5">
+      <section className="inspect-tools-scroll scrollbar-none scroll-fade px-3 py-4 lg:py-5">
         <div className="flex items-center justify-between px-3 pb-3">
           <h1 className="font-sans font-semibold">Detected tools</h1>
           <p className="text-muted-foreground">{tools.length} found</p>
@@ -165,7 +165,7 @@ export const DetectedToolsSectionError = ({
       className="inspect-tools-panel border-b border-border bg-background/70"
       role="status"
     >
-      <section className="inspect-tools-scroll px-6 py-5">
+      <section className="inspect-tools-scroll scrollbar-none scroll-fade px-6 py-5">
         <div className="flex items-center gap-3">
           <AlertCircle className="size-5 text-destructive" aria-hidden="true" />
           <h1 className="font-sans font-semibold">Tool discovery failed</h1>
@@ -191,7 +191,7 @@ export const DetectedToolsSectionProgress = ({
       aria-busy="true"
       aria-label="Detecting WebMCP tools"
     >
-      <section className="inspect-tools-scroll px-6 py-5">
+      <section className="inspect-tools-scroll scrollbar-none scroll-fade px-6 py-5">
         <div className="flex items-center gap-3">
           <Spinner className="size-5 text-primary" />
           <div>
@@ -227,7 +227,7 @@ export const DetectedToolsSectionSkeleton = () => {
       className="inspect-tools-panel border-b border-border bg-background/70"
       aria-label="Loading detected tools"
     >
-      <section className="inspect-tools-scroll px-6 py-5">
+      <section className="inspect-tools-scroll scrollbar-none scroll-fade px-6 py-5">
         <div className="flex items-center justify-between gap-4 pb-4">
           <Skeleton className="h-6 w-32 rounded-lg" />
           <Skeleton className="h-5 w-14 rounded-lg" />

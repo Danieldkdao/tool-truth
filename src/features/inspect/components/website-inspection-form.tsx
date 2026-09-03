@@ -14,8 +14,10 @@ import {
   type InspectFormValues,
 } from "@/features/inspect/actions/schemas";
 import { showToast } from "@/lib/utils";
+import { useState } from "react";
 
 export const WebsiteInspectionForm = () => {
+  const [loading, setLoading] = useState(false);
   const router = useRouter();
   const form = useForm<InspectFormValues>({
     resolver: zodResolver(inspectFormSchema),
@@ -25,6 +27,7 @@ export const WebsiteInspectionForm = () => {
   });
 
   const onSubmit = async (data: InspectFormValues) => {
+    setLoading(true);
     try {
       const response = await fetch("/api/inspection", {
         method: "POST",
@@ -54,6 +57,8 @@ export const WebsiteInspectionForm = () => {
         description: `Run ID: ${result.runId}`,
       });
       router.push(`/inspect/${encodeURIComponent(result.runId)}`);
+
+      // note: we don't set loading to false here because the page is being redirected
     } catch (error) {
       const message =
         error instanceof Error
@@ -64,8 +69,11 @@ export const WebsiteInspectionForm = () => {
       showToast("Unable to start inspection", "error", {
         description: message,
       });
+      setLoading(false);
     }
   };
+
+  const buttonDisabled = form.formState.isSubmitting || loading;
 
   return (
     <form
@@ -111,12 +119,10 @@ export const WebsiteInspectionForm = () => {
         <Button
           type="submit"
           size="lg"
-          disabled={form.formState.isSubmitting}
+          disabled={buttonDisabled}
           className="h-13 rounded-2xl px-6 text-base font-semibold shadow-sm shadow-primary/15"
         >
-          {form.formState.isSubmitting
-            ? "Starting inspection…"
-            : "Inspect website"}
+          {buttonDisabled ? "Starting inspection…" : "Inspect website"}
           <ArrowRight className="size-5 transition-transform group-hover/button:translate-x-0.5" />
         </Button>
 

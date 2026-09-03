@@ -25,7 +25,14 @@ export const createFocusVerificationEvidenceTool = (
       },
       evidenceView: {
         type: "string",
-        enum: ["timeline", "state_diff", "network", "logs"],
+        enum: [
+          "timeline",
+          "state_diff",
+          "network",
+          "logs",
+          "statistics",
+          "replay",
+        ],
         description:
           "Optional evidence view to open. Omit it to keep the current view.",
       },

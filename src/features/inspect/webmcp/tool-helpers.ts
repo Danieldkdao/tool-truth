@@ -13,6 +13,8 @@ const EVIDENCE_TABS_BY_VIEW: Record<EvidenceView, EvidenceTab> = {
   state_diff: "State diff",
   network: "Network",
   logs: "Logs",
+  statistics: "Statistics",
+  replay: "Replay",
 };
 
 const EVIDENCE_VIEWS_BY_TAB: Record<EvidenceTab, EvidenceView> = {
@@ -20,6 +22,8 @@ const EVIDENCE_VIEWS_BY_TAB: Record<EvidenceTab, EvidenceView> = {
   "State diff": "state_diff",
   Network: "network",
   Logs: "logs",
+  Statistics: "statistics",
+  Replay: "replay",
 };
 
 const TERMINAL_VERIFICATION_STATUSES = new Set([
@@ -131,7 +135,7 @@ export const readEvidenceTab = (input: Record<string, unknown>) => {
     !(evidenceView in EVIDENCE_TABS_BY_VIEW)
   ) {
     throw new Error(
-      "evidenceView must be timeline, state_diff, network, or logs.",
+      "evidenceView must be timeline, state_diff, network, logs, statistics, or replay.",
     );
   }
 

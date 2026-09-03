@@ -2,16 +2,43 @@ import "server-only";
 
 import { randomBytes } from "node:crypto";
 
-import type { DetectedTool } from "@/features/inspect/components/inspection-data";
+import type {
+  DetectedTool,
+  EvidenceScreenshot,
+} from "@/features/inspect/components/inspection-data";
 import type { VerificationStreamEvent } from "@/features/inspect/components/inspection-stream";
-import type { InspectionBrowserSession } from "@/features/inspect/server/inspection-browser-session";
+import type {
+  BrowserbaseSessionLifecycle,
+  BrowserbaseSessionLifecycleReporter,
+  BrowserbaseSessionTerminationReason,
+  InspectionBrowserSession,
+} from "@/features/inspect/server/inspection-browser-session";
 import type { ValidatedInspectionTarget } from "@/features/inspect/server/validate-inspection-url";
 
 const RUN_TTL_MS = 60 * 60 * 1000;
 const MAX_ACTIVE_RUNS = 500;
 const MAX_PROBES_PER_RUN = 20;
+const MAX_SCREENSHOTS_PER_PROBE = 2;
+const MAX_SCREENSHOT_BYTES = 1_000_000;
+const MAX_SCREENSHOT_BYTES_PER_RUN = 40_000_000;
+const MAX_SCREENSHOT_BYTES_GLOBALLY = 256_000_000;
 
 type ProbeSubscriber = (event: VerificationStreamEvent) => void;
+
+export type RetainedInspectionScreenshot = {
+  id: string;
+  label: string;
+  contentType: "image/jpeg";
+  body: Uint8Array;
+  bytes: number;
+  hash: string;
+  createdAt: number;
+};
+
+export type RetainInspectionScreenshotInput = Pick<
+  RetainedInspectionScreenshot,
+  "label" | "contentType" | "body" | "hash"
+>;
 
 export type InspectionProbe = {
   id: string;
@@ -23,6 +50,8 @@ export type InspectionProbe = {
   execution?: Promise<void>;
   abortController?: AbortController;
   browserSession?: Promise<InspectionBrowserSession>;
+  browserbaseLifecycleId?: string;
+  screenshots: Map<string, RetainedInspectionScreenshot>;
 };
 
 export type InspectionRun = {
@@ -33,6 +62,8 @@ export type InspectionRun = {
   resolvedAddresses: string[];
   createdAt: number;
   expiresAt: number;
+  browserbaseSessions: BrowserbaseSessionLifecycle[];
+  discoveryBrowserbaseLifecycleId?: string;
   browserSession?: Promise<InspectionBrowserSession>;
   browserSessionExpiration?: NodeJS.Timeout;
   toolDiscovery?: Promise<DetectedTool[]>;
@@ -48,9 +79,34 @@ const inspectionRuns =
 
 globalForInspectionRuns.toolTruthInspectionRuns = inspectionRuns;
 
+const createBrowserbaseLifecycleReporter = (
+  run: InspectionRun,
+  probe?: InspectionProbe,
+): BrowserbaseSessionLifecycleReporter => {
+  return (lifecycle) => {
+    if (probe) {
+      probe.browserbaseLifecycleId = lifecycle.lifecycleId;
+    } else {
+      run.discoveryBrowserbaseLifecycleId = lifecycle.lifecycleId;
+    }
+    run.browserbaseSessions ??= [];
+    const index = run.browserbaseSessions.findIndex(
+      (session) => session.lifecycleId === lifecycle.lifecycleId,
+    );
+
+    if (index === -1) {
+      run.browserbaseSessions.push(lifecycle);
+      return;
+    }
+
+    run.browserbaseSessions[index] = lifecycle;
+  };
+};
+
 const closeRunBrowserSession = async (
   run: InspectionRun,
   expectedSession?: Promise<InspectionBrowserSession>,
+  reason: BrowserbaseSessionTerminationReason = "completed",
 ) => {
   if (expectedSession && run.browserSession !== expectedSession) return;
 
@@ -63,7 +119,7 @@ const closeRunBrowserSession = async (
   run.browserSession = undefined;
   if (session) {
     await session
-      .then((browserSession) => browserSession.close())
+      .then((browserSession) => browserSession.close(reason))
       .catch(() => undefined);
   }
 };
@@ -71,6 +127,7 @@ const closeRunBrowserSession = async (
 const closeProbeBrowserSession = async (
   probe: InspectionProbe,
   expectedSession?: Promise<InspectionBrowserSession>,
+  reason: BrowserbaseSessionTerminationReason = "completed",
 ) => {
   if (expectedSession && probe.browserSession !== expectedSession) return;
 
@@ -78,7 +135,7 @@ const closeProbeBrowserSession = async (
   probe.browserSession = undefined;
   if (session) {
     await session
-      .then((browserSession) => browserSession.close())
+      .then((browserSession) => browserSession.close(reason))
       .catch(() => undefined);
   }
 };
@@ -91,9 +148,9 @@ const deleteInspectionRun = (runId: string, run: InspectionRun) => {
   inspectionRuns.delete(runId);
   for (const probe of run.probes.values()) {
     cancelInspectionProbe(probe);
-    void closeProbeBrowserSession(probe);
+    void closeProbeBrowserSession(probe, undefined, "run_expired");
   }
-  void closeRunBrowserSession(run);
+  void closeRunBrowserSession(run, undefined, "run_expired");
 };
 
 const deleteExpiredRuns = (now = Date.now()) => {
@@ -130,6 +187,7 @@ export const createInspectionRun = (target: ValidatedInspectionTarget) => {
     resolvedAddresses: target.resolvedAddresses,
     createdAt: now,
     expiresAt: now + RUN_TTL_MS,
+    browserbaseSessions: [],
     probes: new Map(),
   };
 
@@ -155,10 +213,12 @@ export const getInspectionRun = (runId: string) => {
 
 export const getOrCreateInspectionBrowserSession = (
   run: InspectionRun,
-  create: () => Promise<InspectionBrowserSession>,
+  create: (
+    reportLifecycle: BrowserbaseSessionLifecycleReporter,
+  ) => Promise<InspectionBrowserSession>,
 ) => {
   if (!run.browserSession) {
-    run.browserSession = create();
+    run.browserSession = create(createBrowserbaseLifecycleReporter(run));
     const expirationDelay = Math.max(0, run.expiresAt - Date.now());
     run.browserSessionExpiration = setTimeout(() => {
       if (inspectionRuns.get(run.id) === run) deleteInspectionRun(run.id, run);
@@ -172,23 +232,147 @@ export const getOrCreateInspectionBrowserSession = (
 export const disposeInspectionBrowserSession = (
   run: InspectionRun,
   expectedSession?: Promise<InspectionBrowserSession>,
+  reason: BrowserbaseSessionTerminationReason = "completed",
 ) => {
-  return closeRunBrowserSession(run, expectedSession);
+  return closeRunBrowserSession(run, expectedSession, reason);
 };
 
 export const getOrCreateInspectionProbeBrowserSession = (
+  run: InspectionRun,
   probe: InspectionProbe,
-  create: () => Promise<InspectionBrowserSession>,
+  create: (
+    reportLifecycle: BrowserbaseSessionLifecycleReporter,
+  ) => Promise<InspectionBrowserSession>,
 ) => {
-  probe.browserSession ??= create();
+  probe.browserSession ??= create(
+    createBrowserbaseLifecycleReporter(run, probe),
+  );
   return probe.browserSession;
+};
+
+export const getInspectionDiscoveryBrowserbaseLifecycle = (
+  run: InspectionRun,
+) => {
+  if (!run.discoveryBrowserbaseLifecycleId) return undefined;
+
+  return run.browserbaseSessions.find(
+    (session) =>
+      session.lifecycleId === run.discoveryBrowserbaseLifecycleId,
+  );
+};
+
+export const getInspectionProbeBrowserbaseLifecycle = (
+  run: InspectionRun,
+  probe: InspectionProbe,
+) => {
+  if (!probe.browserbaseLifecycleId) return undefined;
+
+  return run.browserbaseSessions.find(
+    (session) => session.lifecycleId === probe.browserbaseLifecycleId,
+  );
+};
+
+const getRetainedScreenshotBytes = (run?: InspectionRun) => {
+  const runs = run ? [run] : inspectionRuns.values();
+  let bytes = 0;
+
+  for (const candidateRun of runs) {
+    for (const probe of candidateRun.probes.values()) {
+      probe.screenshots ??= new Map();
+      for (const screenshot of probe.screenshots.values()) {
+        bytes += screenshot.bytes;
+      }
+    }
+  }
+
+  return bytes;
+};
+
+const removeOldestScreenshot = (run?: InspectionRun) => {
+  const runs = run ? [run] : inspectionRuns.values();
+  let oldest:
+    | { probe: InspectionProbe; screenshot: RetainedInspectionScreenshot }
+    | undefined;
+
+  for (const candidateRun of runs) {
+    for (const probe of candidateRun.probes.values()) {
+      probe.screenshots ??= new Map();
+      for (const screenshot of probe.screenshots.values()) {
+        if (!oldest || screenshot.createdAt < oldest.screenshot.createdAt) {
+          oldest = { probe, screenshot };
+        }
+      }
+    }
+  }
+
+  if (!oldest) return false;
+  oldest.probe.screenshots.delete(oldest.screenshot.id);
+  return true;
+};
+
+export const retainInspectionProbeScreenshot = (
+  run: InspectionRun,
+  probe: InspectionProbe,
+  input: RetainInspectionScreenshotInput,
+): EvidenceScreenshot | undefined => {
+  const bytes = input.body.byteLength;
+  if (bytes === 0 || bytes > MAX_SCREENSHOT_BYTES) return undefined;
+
+  probe.screenshots ??= new Map();
+  while (probe.screenshots.size >= MAX_SCREENSHOTS_PER_PROBE) {
+    const oldestScreenshotId = probe.screenshots.keys().next().value as
+      | string
+      | undefined;
+    if (!oldestScreenshotId) break;
+    probe.screenshots.delete(oldestScreenshotId);
+  }
+
+  while (
+    getRetainedScreenshotBytes(run) + bytes > MAX_SCREENSHOT_BYTES_PER_RUN
+  ) {
+    if (!removeOldestScreenshot(run)) return undefined;
+  }
+
+  while (
+    getRetainedScreenshotBytes() + bytes > MAX_SCREENSHOT_BYTES_GLOBALLY
+  ) {
+    if (!removeOldestScreenshot()) return undefined;
+  }
+
+  const id = `screenshot_${randomBytes(18).toString("base64url")}`;
+  const screenshot: RetainedInspectionScreenshot = {
+    id,
+    label: input.label,
+    contentType: input.contentType,
+    body: Uint8Array.from(input.body),
+    bytes,
+    hash: input.hash,
+    createdAt: Date.now(),
+  };
+  probe.screenshots.set(id, screenshot);
+
+  return {
+    label: screenshot.label,
+    url: `/api/inspection/${encodeURIComponent(run.id)}/probe/${encodeURIComponent(probe.id)}/screenshot/${encodeURIComponent(id)}`,
+    bytes: screenshot.bytes,
+    hash: screenshot.hash,
+  };
+};
+
+export const getInspectionProbeScreenshot = (
+  probe: InspectionProbe,
+  screenshotId: string,
+) => {
+  probe.screenshots ??= new Map();
+  return probe.screenshots.get(screenshotId);
 };
 
 export const disposeInspectionProbeBrowserSession = (
   probe: InspectionProbe,
   expectedSession?: Promise<InspectionBrowserSession>,
+  reason: BrowserbaseSessionTerminationReason = "completed",
 ) => {
-  return closeProbeBrowserSession(probe, expectedSession);
+  return closeProbeBrowserSession(probe, expectedSession, reason);
 };
 
 export const getOrCreateToolDiscovery = (
@@ -208,7 +392,7 @@ export const createInspectionProbe = (run: InspectionRun, toolId: string) => {
       const oldestProbe = run.probes.get(oldestProbeId);
       if (oldestProbe) {
         cancelInspectionProbe(oldestProbe);
-        void closeProbeBrowserSession(oldestProbe);
+        void closeProbeBrowserSession(oldestProbe, undefined, "replaced");
       }
       run.probes.delete(oldestProbeId);
     }
@@ -221,6 +405,7 @@ export const createInspectionProbe = (run: InspectionRun, toolId: string) => {
     createdAt: Date.now(),
     events: [],
     subscribers: new Set(),
+    screenshots: new Map(),
   };
 
   run.probes.set(probe.id, probe);

@@ -3,11 +3,15 @@ import { discoverWebMcpTools } from "@/features/inspect/server/discover-webmcp-t
 import { getInspectionBrowserFailureMessage } from "@/features/inspect/server/stagehand-browser";
 import {
   disposeInspectionBrowserSession,
+  getInspectionDiscoveryBrowserbaseLifecycle,
   getInspectionRun,
   getOrCreateInspectionBrowserSession,
   getOrCreateToolDiscovery,
 } from "@/features/inspect/server/inspection-run-store";
-import { openInspectionBrowserSession } from "@/features/inspect/server/inspection-browser-session";
+import {
+  openInspectionBrowserSession,
+  toBrowserSessionView,
+} from "@/features/inspect/server/inspection-browser-session";
 import type { ParamsId } from "@/lib/types";
 
 const encodeEvent = (
@@ -50,11 +54,21 @@ export const GET = async (
         eventId += 1;
         controller.enqueue(encodeEvent(encoder, eventId, event));
       };
+      const sendLatestBrowserSession = () => {
+        const lifecycle = getInspectionDiscoveryBrowserbaseLifecycle(run);
+        if (!lifecycle) return;
+
+        send({
+          kind: "browser.session.updated",
+          data: toBrowserSessionView(lifecycle, run.targetUrl),
+        });
+      };
 
       controller.enqueue(
         encoder.encode("retry: 1500\n: inspection stream ready\n\n"),
       );
       send({ kind: "run.connected", runId });
+      sendLatestBrowserSession();
       send({
         kind: "section.progress",
         section: "tools",
@@ -67,14 +81,23 @@ export const GET = async (
       void getOrCreateToolDiscovery(run, async () => {
         const browserSession = getOrCreateInspectionBrowserSession(
           run,
-          () =>
+          (reportLifecycle) =>
             openInspectionBrowserSession(
               run.targetHostname,
               (progress) => {
                 send({ kind: "section.progress", section: "tools", progress });
               },
+              (lifecycle) => {
+                reportLifecycle(lifecycle);
+                send({
+                  kind: "browser.session.updated",
+                  data: toBrowserSessionView(lifecycle, run.targetUrl),
+                });
+              },
             ),
         );
+
+        let failed = false;
 
         try {
           return await discoverWebMcpTools(
@@ -84,8 +107,15 @@ export const GET = async (
             },
             await browserSession,
           );
+        } catch (error) {
+          failed = true;
+          throw error;
         } finally {
-          await disposeInspectionBrowserSession(run, browserSession);
+          await disposeInspectionBrowserSession(
+            run,
+            browserSession,
+            failed ? "failed" : "completed",
+          );
         }
       })
         .then(async (tools) => {
@@ -108,6 +138,7 @@ export const GET = async (
           });
         })
         .finally(() => {
+          sendLatestBrowserSession();
           send({ kind: "run.completed" });
           close();
         });

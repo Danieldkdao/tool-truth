@@ -10,6 +10,7 @@ export const serverEnv = createEnv({
     BROWSERBASE_PROJECT_ID: z.string().min(1).optional(),
     OPENROUTER_API_KEY: z.string().min(1).optional(),
     STAGEHAND_ENV: z.enum(["local", "browserbase"]).default("local"),
+    TOOLTRUTH_BLOCKED_HOSTNAMES: z.string().min(1).optional(),
     NODE_ENV: z
       .enum(["development", "test", "production"])
       .default("development"),

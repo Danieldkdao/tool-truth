@@ -2,6 +2,7 @@ import type { VerificationStreamEvent } from "@/features/inspect/components/insp
 import {
   InspectionBrowserSessionUnavailableError,
   openInspectionBrowserSession,
+  toBrowserSessionView,
 } from "@/features/inspect/server/inspection-browser-session";
 import {
   cancelInspectionProbe,
@@ -11,6 +12,7 @@ import {
   getOrCreateInspectionProbeBrowserSession,
   getOrStartInspectionProbe,
   publishInspectionProbeEvent,
+  retainInspectionProbeScreenshot,
   subscribeToInspectionProbe,
 } from "@/features/inspect/server/inspection-run-store";
 import { runToolVerification } from "@/features/inspect/server/run-tool-verification";
@@ -97,8 +99,9 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
       void getOrStartInspectionProbe(probe, async (signal) => {
         const runWithDisposableBrowser = async () => {
           const browserSession = getOrCreateInspectionProbeBrowserSession(
+            run,
             probe,
-            () =>
+            (reportLifecycle) =>
               openInspectionBrowserSession(
                 run.targetHostname,
                 (progress) =>
@@ -113,8 +116,20 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
                       ),
                     },
                   }),
+                (lifecycle) => {
+                  reportLifecycle(lifecycle);
+                  publishInspectionProbeEvent(probe, {
+                    kind: "browser.session.updated",
+                    data: toBrowserSessionView(lifecycle, run.targetUrl),
+                  });
+                },
               ),
           );
+
+          let terminationReason:
+            | "completed"
+            | "failed"
+            | "canceled" = "completed";
 
           try {
             await runToolVerification({
@@ -127,9 +142,18 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
                 disposeInspectionProbeBrowserSession(probe, browserSession),
               signal,
               report: (event) => publishInspectionProbeEvent(probe, event),
+              retainScreenshot: (screenshot) =>
+                retainInspectionProbeScreenshot(run, probe, screenshot),
             });
+          } catch (error) {
+            terminationReason = signal.aborted ? "canceled" : "failed";
+            throw error;
           } finally {
-            await disposeInspectionProbeBrowserSession(probe, browserSession);
+            await disposeInspectionProbeBrowserSession(
+              probe,
+              browserSession,
+              terminationReason,
+            );
           }
         };
 

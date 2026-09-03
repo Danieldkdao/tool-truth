@@ -5,6 +5,7 @@ import { Stagehand } from "@browserbasehq/stagehand";
 import { serverEnv } from "@/data/env/server";
 import {
   createSharedStagehandOptions,
+  type BrowserbaseSessionMetadata,
   INSPECTION_VIEWPORT,
   type InspectionBrowserHandle,
   InspectionBrowserStartupError,
@@ -14,6 +15,117 @@ import {
 const BROWSERBASE_SESSION_CREATE_TIMEOUT_MS = 30_000;
 const BROWSERBASE_INITIALIZATION_TIMEOUT_MS = 45_000;
 const BROWSERBASE_SESSION_TIMEOUT_SECONDS = 5 * 60;
+const BROWSERBASE_LIVE_VIEW_TIMEOUT_MS = 10_000;
+const BROWSERBASE_METADATA_TIMEOUT_MS = 10_000;
+const BROWSERBASE_SESSION_RELEASE_TIMEOUT_MS = 10_000;
+
+type BrowserbaseLiveViewResponse = {
+  debuggerFullscreenUrl?: unknown;
+};
+
+type BrowserbaseSessionResponse = {
+  startedAt?: unknown;
+  endedAt?: unknown;
+  expiresAt?: unknown;
+  status?: unknown;
+  proxyBytes?: unknown;
+  region?: unknown;
+};
+
+type BrowserbaseReplayResponse = {
+  pages?: unknown;
+};
+
+const toTimestamp = (value: unknown) => {
+  if (typeof value !== "string") return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
+};
+
+const requestBrowserbaseApi = async (
+  path: string,
+  apiKey: string,
+  timeoutMessage: string,
+) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    BROWSERBASE_METADATA_TIMEOUT_MS,
+  );
+  timeout.unref?.();
+
+  try {
+    return await fetch(`https://api.browserbase.com${path}`, {
+      headers: { "X-BB-API-Key": apiKey },
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  } catch (error) {
+    throw new Error(
+      error instanceof DOMException && error.name === "AbortError"
+        ? timeoutMessage
+        : "Browserbase metadata could not be reached.",
+      { cause: error },
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const requestBrowserbaseSessionMetadata = async (
+  sessionId: string,
+  apiKey: string,
+): Promise<BrowserbaseSessionMetadata> => {
+  const response = await requestBrowserbaseApi(
+    `/v1/sessions/${encodeURIComponent(sessionId)}`,
+    apiKey,
+    "Browserbase session metadata retrieval timed out.",
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Browserbase session metadata request returned ${response.status}.`,
+    );
+  }
+
+  const payload = (await response.json()) as BrowserbaseSessionResponse;
+  const proxyBytes = payload.proxyBytes;
+
+  return {
+    startedAt: toTimestamp(payload.startedAt),
+    endedAt: toTimestamp(payload.endedAt),
+    expiresAt: toTimestamp(payload.expiresAt),
+    status: typeof payload.status === "string" ? payload.status : null,
+    proxyBytes:
+      typeof proxyBytes === "number" &&
+      Number.isFinite(proxyBytes) &&
+      proxyBytes >= 0
+        ? proxyBytes
+        : null,
+    region: typeof payload.region === "string" ? payload.region : null,
+  };
+};
+
+const requestBrowserbaseReplayAvailability = async (
+  sessionId: string,
+  apiKey: string,
+) => {
+  const response = await requestBrowserbaseApi(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/replays`,
+    apiKey,
+    "Browserbase replay availability retrieval timed out.",
+  );
+
+  if (response.status === 404) return false;
+  if (!response.ok) {
+    throw new Error(
+      `Browserbase replay availability request returned ${response.status}.`,
+    );
+  }
+
+  const payload = (await response.json()) as BrowserbaseReplayResponse;
+  return Array.isArray(payload.pages) && payload.pages.length > 0;
+};
 
 const withDeadline = async <T>(
   operation: Promise<T>,
@@ -82,18 +194,63 @@ const toBrowserbaseStartupError = (error: unknown) => {
   );
 };
 
+const requestBrowserbaseLiveViewUrl = async (
+  sessionId: string,
+  apiKey: string,
+) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    BROWSERBASE_LIVE_VIEW_TIMEOUT_MS,
+  );
+  timeout.unref?.();
+
+  try {
+    const response = await fetch(
+      `https://api.browserbase.com/v1/sessions/${encodeURIComponent(sessionId)}/debug`,
+      {
+        headers: { "X-BB-API-Key": apiKey },
+        signal: controller.signal,
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Browserbase Live View request returned ${response.status}.`,
+      );
+    }
+
+    const payload = (await response.json()) as BrowserbaseLiveViewResponse;
+    if (typeof payload.debuggerFullscreenUrl !== "string") {
+      throw new Error("Browserbase did not return a Live View URL.");
+    }
+
+    const liveViewUrl = new URL(payload.debuggerFullscreenUrl);
+    if (liveViewUrl.protocol !== "https:") {
+      throw new Error("Browserbase returned an insecure Live View URL.");
+    }
+
+    return liveViewUrl.toString();
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
 export const createBrowserbaseInspectionBrowser = (
   reportLog: StagehandLogReporter,
   allowedDomains: string[],
 ): InspectionBrowserHandle => {
-  if (!serverEnv.BROWSERBASE_API_KEY) {
+  const apiKey = serverEnv.BROWSERBASE_API_KEY;
+  const projectId = serverEnv.BROWSERBASE_PROJECT_ID;
+
+  if (!apiKey) {
     throw new InspectionBrowserStartupError(
       "BROWSERBASE_API_KEY is not configured.",
       "Browserbase is selected, but BROWSERBASE_API_KEY is not configured.",
     );
   }
 
-  if (!serverEnv.BROWSERBASE_PROJECT_ID) {
+  if (!projectId) {
     throw new InspectionBrowserStartupError(
       "BROWSERBASE_PROJECT_ID is not configured.",
       "Browserbase is selected, but BROWSERBASE_PROJECT_ID is not configured.",
@@ -107,13 +264,13 @@ export const createBrowserbaseInspectionBrowser = (
   const browser = new Stagehand({
     ...createSharedStagehandOptions(reportLog),
     env: "BROWSERBASE",
-    apiKey: serverEnv.BROWSERBASE_API_KEY,
-    projectId: serverEnv.BROWSERBASE_PROJECT_ID,
+    apiKey,
+    projectId,
     keepAlive: false,
     browserbaseSessionCreateParams: {
       timeout: BROWSERBASE_SESSION_TIMEOUT_SECONDS,
       browserSettings: {
-        recordSession: false,
+        recordSession: true,
         viewport: INSPECTION_VIEWPORT,
       },
       userMetadata: {
@@ -125,6 +282,8 @@ export const createBrowserbaseInspectionBrowser = (
 
   return {
     browser,
+    provider: "browserbase",
+    browserbaseSessionTimeoutMs: BROWSERBASE_SESSION_TIMEOUT_SECONDS * 1_000,
     initialize: async (reportStartup) => {
       reportStartup({
         value: 20,
@@ -156,5 +315,45 @@ export const createBrowserbaseInspectionBrowser = (
       }
     },
     closeEnvironment: async () => undefined,
+    requestBrowserbaseLiveViewUrl: (sessionId) =>
+      requestBrowserbaseLiveViewUrl(sessionId, apiKey),
+    requestBrowserbaseSessionMetadata: (sessionId) =>
+      requestBrowserbaseSessionMetadata(sessionId, apiKey),
+    requestBrowserbaseReplayAvailability: (sessionId) =>
+      requestBrowserbaseReplayAvailability(sessionId, apiKey),
+    releaseBrowserbaseSession: async (sessionId) => {
+      const controller = new AbortController();
+      const timeout = setTimeout(
+        () => controller.abort(),
+        BROWSERBASE_SESSION_RELEASE_TIMEOUT_MS,
+      );
+      timeout.unref?.();
+
+      try {
+        const response = await fetch(
+          `https://api.browserbase.com/v1/sessions/${encodeURIComponent(sessionId)}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-BB-API-Key": apiKey,
+            },
+            body: JSON.stringify({
+              projectId,
+              status: "REQUEST_RELEASE",
+            }),
+            signal: controller.signal,
+          },
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            `Browserbase session release returned ${response.status}.`,
+          );
+        }
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
   };
 };

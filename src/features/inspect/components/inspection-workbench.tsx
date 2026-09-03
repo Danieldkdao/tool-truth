@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/resizable";
 
 import {
+  BrowserPreviewLiveView,
   BrowserPreviewLocalPlaceholder,
   BrowserPreviewSectionProgress,
   BrowserPreviewSectionSkeleton,
@@ -143,7 +144,7 @@ const DesktopWorkbenchLayout = ({
           maxSize="30rem"
           groupResizeBehavior="preserve-pixel-size"
         >
-          <div className="h-full min-h-0 overflow-y-auto [&>.inspect-analysis]:min-h-full [&>.inspect-analysis]:border-t-0 [&>.inspect-analysis]:border-l-0">
+          <div className="scrollbar-none scroll-fade h-full min-h-0 overflow-y-auto [&>.inspect-analysis]:min-h-full [&>.inspect-analysis]:border-t-0 [&>.inspect-analysis]:border-l-0">
             {analysisPanel}
           </div>
         </ResizablePanel>
@@ -161,6 +162,7 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
   const session = useInspectionSessionController(runId);
   const {
     tools,
+    browserSession,
     selectedToolId,
     selectedTool,
     activeEvidenceTab,
@@ -231,10 +233,25 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
     <DetectedToolsSectionProgress progress={progress.tools} />
   );
 
-  const browserPanel = tools ? (
+  const fallbackScreenshot =
+    selectedVerification?.evidenceData?.screenshots?.[
+      selectedVerification.evidenceData.screenshots.length - 1
+    ];
+  const activeBrowserSession =
+    selectedVerification?.status === "running"
+      ? selectedVerification.browserSession
+      : (selectedVerification?.browserSession ?? browserSession);
+  const browserPanel = activeBrowserSession ? (
+    <BrowserPreviewLiveView
+      session={activeBrowserSession}
+      toolName={selectedTool?.name}
+      fallbackScreenshot={fallbackScreenshot}
+    />
+  ) : tools ? (
     <BrowserPreviewLocalPlaceholder
       toolName={selectedTool?.name}
       verificationStatus={selectedVerification?.status}
+      fallbackScreenshot={fallbackScreenshot}
     />
   ) : (
     <BrowserPreviewSectionProgress progress={progress.browser} />
@@ -245,9 +262,12 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
       <ExecutionEvidenceSectionProgress
         progress={selectedVerification.evidenceProgress}
       />
-    ) : selectedVerification?.evidenceData ? (
+    ) : selectedVerification?.evidenceData && selectedVerification.probeId ? (
       <ExecutionEvidenceSection
         data={selectedVerification.evidenceData}
+        runId={runId}
+        probeId={selectedVerification.probeId}
+        replayAvailable={selectedVerification.browserSession !== null}
         activeTab={activeEvidenceTab}
         onActiveTabChange={(tab) => session.focusEvidence({ tab })}
       />
