@@ -1,6 +1,10 @@
 import { inspectFormSchema } from "@/features/inspect/actions/schemas";
 import { createInspectionRun } from "@/features/inspect/server/inspection-run-store";
 import {
+  readRequestBodyWithLimit,
+  RequestBodyTooLargeError,
+} from "@/features/inspect/server/read-request-body";
+import {
   UnsafeInspectionUrlError,
   validateInspectionUrl,
 } from "@/features/inspect/server/validate-inspection-url";
@@ -25,8 +29,14 @@ export const POST = async (request: Request) => {
     );
   }
 
-  const bodyText = await request.text();
-  if (bodyText.length > MAX_REQUEST_BODY_LENGTH) {
+  let bodyText: string;
+  try {
+    bodyText = await readRequestBodyWithLimit(
+      request,
+      MAX_REQUEST_BODY_LENGTH,
+    );
+  } catch (error) {
+    if (!(error instanceof RequestBodyTooLargeError)) throw error;
     return jsonResponse({ error: "The request body is too large." }, 413);
   }
 

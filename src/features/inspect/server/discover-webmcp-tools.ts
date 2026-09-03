@@ -52,7 +52,7 @@ export const discoverWebMcpTools = async (
 
   await validateInspectionUrl(targetUrl);
 
-  return browserSession.runExclusive(async ({ page }) => {
+  return browserSession.runExclusive(async ({ page, evidenceObserver }) => {
     reportProgress({
       value: 52,
       message: "Loading the submitted website",
@@ -64,6 +64,7 @@ export const discoverWebMcpTools = async (
     });
 
     await validateInspectionUrl(page.url());
+    await evidenceObserver.refresh();
 
     reportProgress({
       value: 78,

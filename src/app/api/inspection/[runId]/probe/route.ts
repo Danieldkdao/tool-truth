@@ -4,6 +4,10 @@ import {
   createInspectionProbe,
   getInspectionRun,
 } from "@/features/inspect/server/inspection-run-store";
+import {
+  readRequestBodyWithLimit,
+  RequestBodyTooLargeError,
+} from "@/features/inspect/server/read-request-body";
 import type { ParamsId } from "@/lib/types";
 
 const MAX_REQUEST_BODY_LENGTH = 4096;
@@ -36,9 +40,15 @@ export const POST = async (
     return jsonResponse({ error: "Content-Type must be application/json." }, 415);
   }
 
-  const bodyText = await request.text();
-  if (bodyText.length > MAX_REQUEST_BODY_LENGTH) {
-    return jsonResponse({ error: "The request body is too large." }, 413);
+  let bodyText: string;
+  try {
+    bodyText = await readRequestBodyWithLimit(
+      request,
+      MAX_REQUEST_BODY_LENGTH,
+    );
+  } catch (error) {
+    if (!(error instanceof RequestBodyTooLargeError)) throw error;
+    return jsonResponse({ error: error.message }, 413);
   }
 
   let body: unknown;

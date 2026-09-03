@@ -10,8 +10,8 @@ import type {
   StateChange,
 } from "@/features/inspect/components/inspection-data";
 import {
+  getToolTruthAnalysisModel,
   TOOLTRUTH_ANALYSIS_MODEL_ID,
-  toolTruthAnalysisModel,
 } from "@/services/ai/models/openrouter";
 
 const SAFE_INPUT_TIMEOUT_MS = 20_000;
@@ -138,7 +138,27 @@ const synthesizeValue = (
     return typeof schema.minimum === "number" ? schema.minimum : 1;
   }
   if (type === "array") {
-    return [];
+    const minimumItems =
+      typeof schema.minItems === "number" && Number.isInteger(schema.minItems)
+        ? Math.max(0, schema.minItems)
+        : 0;
+    const tupleSchemas = Array.isArray(schema.prefixItems)
+      ? schema.prefixItems
+      : Array.isArray(schema.items)
+        ? schema.items
+        : [];
+    const itemSchema = isRecord(schema.items) ? schema.items : undefined;
+
+    return Array.from({ length: minimumItems }, (_, index) => {
+      const rawItemSchema = tupleSchemas[index] ?? itemSchema;
+      if (!isRecord(rawItemSchema)) {
+        throw new Error(
+          `Safe input generation does not support the required array ${propertyName}.`,
+        );
+      }
+
+      return synthesizeValue(`${propertyName}[${index}]`, rawItemSchema);
+    });
   }
   if (type === "object") {
     return synthesizeInput(schema);
@@ -184,6 +204,35 @@ const futureIsoDate = (daysFromNow: number) => {
   return date.toISOString().slice(0, 10);
 };
 
+const isCompatibleValue = (
+  value: unknown,
+  schema: Record<string, unknown>,
+) => {
+  const enumValues = Array.isArray(schema.enum) ? schema.enum : undefined;
+  if (enumValues && !enumValues.includes(value)) return false;
+
+  if (schema.type === "string" && typeof value !== "string") return false;
+  if (schema.type === "boolean" && typeof value !== "boolean") return false;
+  if (
+    (schema.type === "number" || schema.type === "integer") &&
+    typeof value !== "number"
+  ) {
+    return false;
+  }
+  if (schema.type === "object" && !isRecord(value)) return false;
+  if (schema.type === "array") {
+    if (!Array.isArray(value)) return false;
+    const minimumItems =
+      typeof schema.minItems === "number" ? schema.minItems : 0;
+    if (value.length < minimumItems) return false;
+    if (typeof schema.maxItems === "number" && value.length > schema.maxItems) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
 const normalizeGeneratedInput = (
   generated: Record<string, unknown>,
   schema: Record<string, unknown>,
@@ -201,22 +250,7 @@ const normalizeGeneratedInput = (
   Object.entries(properties).forEach(([name, rawPropertySchema], index) => {
     const propertySchema = isRecord(rawPropertySchema) ? rawPropertySchema : {};
     const value = normalized[name];
-    const enumValues = Array.isArray(propertySchema.enum)
-      ? propertySchema.enum
-      : undefined;
-
-    if (enumValues && !enumValues.includes(value)) {
-      normalized[name] = fallback[name];
-      return;
-    }
-    if (propertySchema.type === "string" && typeof value !== "string") {
-      normalized[name] = fallback[name];
-      return;
-    }
-    if (
-      (propertySchema.type === "number" || propertySchema.type === "integer") &&
-      typeof value !== "number"
-    ) {
+    if (!isCompatibleValue(value, propertySchema)) {
       normalized[name] = fallback[name];
       return;
     }
@@ -257,11 +291,19 @@ export const generateSafeToolInput = async (
     return fallbackInput;
   }
 
+  const model = getToolTruthAnalysisModel();
+  if (!model) {
+    reportActivity(
+      "AI input generation skipped; using deterministic schema defaults because OPENROUTER_API_KEY is not configured",
+    );
+    return fallbackInput;
+  }
+
   reportActivity(`Generating safe test input with ${TOOLTRUTH_ANALYSIS_MODEL_ID}`);
 
   try {
     const result = await generateText({
-      model: toolTruthAnalysisModel,
+      model,
       temperature: 0,
       timeout: SAFE_INPUT_TIMEOUT_MS,
       prompt: [
@@ -296,8 +338,22 @@ const indicatesReadOnlyBehavior = (tool: DetectedTool) => {
     return true;
   }
 
-  return /\b(preview|estimate|check|list|get|search|summarize|read|inspect|calculate|validate|compare|show|fetch|retrieve)\b/i.test(
-    `${tool.name} ${tool.description}`,
+  if (annotations.readOnly === false || annotations.readOnlyHint === false) {
+    return false;
+  }
+
+  const description = tool.description.trim();
+  const declaresMutation =
+    /\b(add|book|cancel|charge|checkout|create|delete|modify|order|place|purchase|remove|reserve|save|send|submit|update|write)\b/i.test(
+      description,
+    );
+
+  if (declaresMutation) {
+    return false;
+  }
+
+  return /\b(read[- ]only|no state changes?|without (?:changing|creating|modifying|saving|writing)|does not (?:change|create|modify|save|write))\b/i.test(
+    description,
   );
 };
 
@@ -350,14 +406,12 @@ export const analyzeToolVerification = async (
   const consequentialStateChanges = input.stateChanges.filter(
     ([path]) =>
       path === "page.url" ||
-      /^(localStorage|sessionStorage|cookies)\./.test(path),
+      /^(localStorage|sessionStorage|cookies|form)\./.test(path),
   );
   const mutationCount =
     consequentialStateChanges.length + input.mutatingRequests.length;
-  const outputText = JSON.stringify(input.toolOutput) ?? "";
-  const outputReportsError = /\b(error|failed|invalid)\b/i.test(outputText);
   const verdict: ContractAnalysisData["verdict"] =
-    input.invocationStatus !== "Completed" || outputReportsError
+    input.invocationStatus !== "Completed"
       ? "error"
       : indicatesReadOnlyBehavior(input.tool) && mutationCount > 0
         ? "failed"
@@ -372,11 +426,25 @@ export const analyzeToolVerification = async (
         ? "Inspect the invocation error and retry with valid synthetic input."
         : "No contract repair is recommended from this run; keep the evidence as a regression fixture.";
 
+  const model = getToolTruthAnalysisModel();
+  if (!model) {
+    reportActivity(
+      "AI evidence summary skipped; using deterministic analysis because OPENROUTER_API_KEY is not configured",
+    );
+    return {
+      findings: { [input.tool.id]: finding },
+      verdict,
+      unexpectedStateChanges: verdict === "failed" ? mutationCount : 0,
+      sandboxLabel: input.sandboxLabel,
+      suggestedRepair,
+    };
+  }
+
   reportActivity(`Summarizing evidence with ${TOOLTRUTH_ANALYSIS_MODEL_ID}`);
 
   try {
     const result = await generateText({
-      model: toolTruthAnalysisModel,
+      model,
       temperature: 0,
       timeout: ANALYSIS_TIMEOUT_MS,
       prompt: [

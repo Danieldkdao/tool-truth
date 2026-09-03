@@ -18,6 +18,10 @@ import type {
   TimelineEntry,
 } from "@/features/inspect/components/inspection-data";
 import type { VerificationStreamEvent } from "@/features/inspect/components/inspection-stream";
+import type {
+  ObservedNetworkEntry,
+  ObservedRuntimeError,
+} from "@/features/inspect/server/browser-evidence-observer";
 import {
   analyzeToolVerification,
   generateSafeToolInput,
@@ -36,78 +40,6 @@ const MAX_LOG_ENTRIES = 250;
 const MAX_NETWORK_ENTRIES = 100;
 const MAX_TEXT_LENGTH = 20_000;
 
-const EVIDENCE_INIT_SCRIPT = `(() => {
-  if (window.__toolTruthEvidence?.installed === true) return;
-  const state = {
-    installed: true,
-    network: [],
-    runtimeErrors: [],
-  };
-  Object.defineProperty(window, "__toolTruthEvidence", {
-    configurable: true,
-    value: state,
-  });
-
-  const pushNetwork = (entry) => {
-    if (state.network.length < 200) state.network.push(entry);
-  };
-  const toUrl = (value) => {
-    try {
-      if (typeof value === "string") return new URL(value, location.href).href;
-      if (value && typeof value.url === "string") return new URL(value.url, location.href).href;
-    } catch {}
-    return String(value ?? "unknown");
-  };
-
-  const originalFetch = window.fetch.bind(window);
-  window.fetch = async (...args) => {
-    const startedAt = performance.now();
-    const init = args[1] ?? {};
-    const method = String(init.method ?? args[0]?.method ?? "GET").toUpperCase();
-    const url = toUrl(args[0]);
-    try {
-      const response = await originalFetch(...args);
-      pushNetwork({ type: "fetch", method, url, status: response.status, durationMs: performance.now() - startedAt });
-      return response;
-    } catch (error) {
-      pushNetwork({ type: "fetch", method, url, status: 0, durationMs: performance.now() - startedAt, error: String(error) });
-      throw error;
-    }
-  };
-
-  const originalOpen = XMLHttpRequest.prototype.open;
-  const originalSend = XMLHttpRequest.prototype.send;
-  XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-    this.__toolTruthRequest = { method: String(method).toUpperCase(), url: toUrl(url) };
-    return originalOpen.call(this, method, url, ...rest);
-  };
-  XMLHttpRequest.prototype.send = function(...args) {
-    const startedAt = performance.now();
-    this.addEventListener("loadend", () => {
-      const request = this.__toolTruthRequest ?? { method: "GET", url: "unknown" };
-      pushNetwork({ type: "xhr", ...request, status: this.status, durationMs: performance.now() - startedAt });
-    }, { once: true });
-    return originalSend.apply(this, args);
-  };
-
-  if (typeof navigator.sendBeacon === "function") {
-    const originalSendBeacon = navigator.sendBeacon.bind(navigator);
-    navigator.sendBeacon = (url, data) => {
-      const startedAt = performance.now();
-      const sent = originalSendBeacon(url, data);
-      pushNetwork({ type: "beacon", method: "POST", url: toUrl(url), status: sent ? 202 : 0, durationMs: performance.now() - startedAt });
-      return sent;
-    };
-  }
-
-  window.addEventListener("error", (event) => {
-    if (state.runtimeErrors.length < 100) state.runtimeErrors.push({ type: "error", message: event.message, source: event.filename });
-  });
-  window.addEventListener("unhandledrejection", (event) => {
-    if (state.runtimeErrors.length < 100) state.runtimeErrors.push({ type: "unhandledrejection", message: String(event.reason) });
-  });
-})();`;
-
 const SNAPSHOT_EXPRESSION = `(() => {
   const readStorage = (storage) => {
     const result = {};
@@ -122,7 +54,6 @@ const SNAPSHOT_EXPRESSION = `(() => {
     value: "value" in element ? String(element.value ?? "").slice(0, 1000) : "",
     checked: "checked" in element ? Boolean(element.checked) : undefined,
   }));
-  const evidence = window.__toolTruthEvidence ?? { network: [], runtimeErrors: [] };
   return {
     url: location.href,
     title: document.title,
@@ -137,33 +68,8 @@ const SNAPSHOT_EXPRESSION = `(() => {
       dialogs: document.querySelectorAll('[role="dialog"], dialog[open]').length,
       liveRegions: document.querySelectorAll('[aria-live], [role="alert"], [role="status"]').length,
     },
-    network: evidence.network.slice().concat(
-      performance.getEntriesByType("resource").slice(0, 100).map((entry) => ({
-        type: "resource",
-        method: "GET",
-        url: entry.name,
-        status: typeof entry.responseStatus === "number" ? entry.responseStatus : 0,
-        durationMs: entry.duration,
-      })),
-    ),
-    runtimeErrors: evidence.runtimeErrors.slice(),
   };
 })()`;
-
-type InstrumentedNetworkEntry = {
-  type: "fetch" | "xhr" | "beacon" | "resource";
-  method: string;
-  url: string;
-  status: number;
-  durationMs: number;
-  error?: string;
-};
-
-type RuntimeErrorEntry = {
-  type: string;
-  message: string;
-  source?: string;
-};
 
 type BrowserSnapshotPayload = {
   url: string;
@@ -179,8 +85,6 @@ type BrowserSnapshotPayload = {
     dialogs: number;
     liveRegions: number;
   };
-  network: InstrumentedNetworkEntry[];
-  runtimeErrors: RuntimeErrorEntry[];
 };
 
 type SafeValue = {
@@ -190,15 +94,15 @@ type SafeValue = {
 
 type BrowserSnapshot = Omit<
   BrowserSnapshotPayload,
-  "localStorage" | "sessionStorage" | "inputs" | "network" | "runtimeErrors"
+  "localStorage" | "sessionStorage" | "inputs"
 > & {
   localStorage: Record<string, SafeValue>;
   sessionStorage: Record<string, SafeValue>;
   inputs: Record<string, SafeValue & { checked?: boolean }>;
   cookies: Record<string, SafeValue>;
   screenshot: SafeValue;
-  network: InstrumentedNetworkEntry[];
-  runtimeErrors: RuntimeErrorEntry[];
+  network: ObservedNetworkEntry[];
+  runtimeErrors: ObservedRuntimeError[];
 };
 
 type VerificationReporter = (event: VerificationStreamEvent) => void;
@@ -337,6 +241,44 @@ const snapshotMapChanges = (
   return changes;
 };
 
+const snapshotFormChanges = (
+  before: BrowserSnapshot["inputs"],
+  after: BrowserSnapshot["inputs"],
+) => {
+  const changes: StateChange[] = [];
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+
+  for (const key of keys) {
+    const beforeValue = before[key];
+    const afterValue = after[key];
+    if (
+      beforeValue?.hash === afterValue?.hash &&
+      beforeValue?.checked === afterValue?.checked
+    ) {
+      continue;
+    }
+
+    const describe = (value: (SafeValue & { checked?: boolean }) | undefined) => {
+      if (!value) return "Not present";
+      const checked =
+        value.checked === undefined
+          ? ""
+          : value.checked
+            ? " · checked"
+            : " · not checked";
+      return `${value.bytes} B · ${value.hash.slice(0, 8)}${checked}`;
+    };
+
+    changes.push([
+      `form.${key}`,
+      describe(beforeValue),
+      afterValue ? describe(afterValue) : "Removed",
+    ]);
+  }
+
+  return changes;
+};
+
 const compareSnapshots = (before: BrowserSnapshot, after: BrowserSnapshot) => {
   const changes: StateChange[] = [];
 
@@ -362,13 +304,86 @@ const compareSnapshots = (before: BrowserSnapshot, after: BrowserSnapshot) => {
   changes.push(...snapshotMapChanges("localStorage", before.localStorage, after.localStorage));
   changes.push(...snapshotMapChanges("sessionStorage", before.sessionStorage, after.sessionStorage));
   changes.push(...snapshotMapChanges("cookies", before.cookies, after.cookies));
-  changes.push(...snapshotMapChanges("form", before.inputs, after.inputs));
+  changes.push(...snapshotFormChanges(before.inputs, after.inputs));
 
   return changes.slice(0, 100);
 };
 
-const toNetworkEntries = (entries: InstrumentedNetworkEntry[]): NetworkEntry[] => {
-  return entries.slice(0, MAX_NETWORK_ENTRIES).map((entry) => ({
+const isSuccessfulRequest = (entry: ObservedNetworkEntry) => {
+  return entry.status >= 200 && entry.status < 400;
+};
+
+const isGraphQlReadRequest = (entry: ObservedNetworkEntry) => {
+  if (!entry.postData) return false;
+
+  try {
+    const parsed = JSON.parse(entry.postData) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return false;
+    }
+    const query = (parsed as Record<string, unknown>).query;
+    return (
+      typeof query === "string" &&
+      /^(?:\s*query\b|\s*\{)/i.test(query) &&
+      !/^\s*mutation\b/i.test(query)
+    );
+  } catch {
+    return false;
+  }
+};
+
+const isObservedMutationRequest = (entry: ObservedNetworkEntry) => {
+  if (!isSuccessfulRequest(entry)) return false;
+
+  if (/^(PUT|PATCH|DELETE)$/i.test(entry.method)) return true;
+  if (entry.method.toUpperCase() !== "POST" || isGraphQlReadRequest(entry)) {
+    return false;
+  }
+
+  if (entry.status === 201 || entry.status === 202 || entry.status === 204) {
+    return true;
+  }
+
+  const semanticEvidence = `${entry.url} ${entry.postData ?? ""}`;
+  return /\b(add|book|cancel|charge|checkout|create|delete|modify|mutation|order|place|purchase|remove|reserve|save|send|submit|update|write)\b/i.test(
+    semanticEvidence,
+  );
+};
+
+const selectLiveTool = (
+  tools: WebMCPTool[],
+  selectedTool: DetectedTool,
+) => {
+  const exactMatch = tools.find(
+    (tool) =>
+      tool.name === selectedTool.name && tool.frameId === selectedTool.frameId,
+  );
+  if (exactMatch) return exactMatch;
+
+  const sameNameMatches = tools.filter(
+    (tool) => tool.name === selectedTool.name,
+  );
+  return sameNameMatches.length === 1 ? sameNameMatches[0] : undefined;
+};
+
+const retainNetworkEvidence = (entries: ObservedNetworkEntry[]) => {
+  if (entries.length <= MAX_NETWORK_ENTRIES) return entries;
+
+  const mutationCandidates = entries.filter(isObservedMutationRequest);
+  const retained = new Set(
+    mutationCandidates.slice(-MAX_NETWORK_ENTRIES),
+  );
+
+  for (const entry of entries) {
+    if (retained.size >= MAX_NETWORK_ENTRIES) break;
+    retained.add(entry);
+  }
+
+  return entries.filter((entry) => retained.has(entry));
+};
+
+const toNetworkEntries = (entries: ObservedNetworkEntry[]): NetworkEntry[] => {
+  return retainNetworkEvidence(entries).map((entry) => ({
     method: entry.method,
     path: safeUrlPath(entry.url),
     status: entry.status === 0 ? "Failed" : String(entry.status),
@@ -379,6 +394,7 @@ const toNetworkEntries = (entries: InstrumentedNetworkEntry[]): NetworkEntry[] =
 const captureSnapshot = async (
   stagehand: InspectionBrowserSessionContext["browser"],
   page: InspectionBrowserSessionContext["page"],
+  evidenceObserver: InspectionBrowserSessionContext["evidenceObserver"],
 ) => {
   const [payload, cookies, screenshot] = await Promise.all([
     page.evaluate<BrowserSnapshotPayload>(SNAPSHOT_EXPRESSION),
@@ -391,6 +407,8 @@ const captureSnapshot = async (
       type: "png",
     }),
   ]);
+
+  const observedEvidence = evidenceObserver.snapshot();
 
   return {
     ...payload,
@@ -410,32 +428,9 @@ const captureSnapshot = async (
       ]),
     ),
     screenshot: hashValue(screenshot),
+    network: observedEvidence.network,
+    runtimeErrors: observedEvidence.runtimeErrors,
   } satisfies BrowserSnapshot;
-};
-
-const resetInvocationEvidence = async (
-  page: InspectionBrowserSessionContext["page"],
-) => {
-  await page.evaluate(`(() => {
-    if (window.__toolTruthEvidence) {
-      window.__toolTruthEvidence.network.length = 0;
-      window.__toolTruthEvidence.runtimeErrors.length = 0;
-    }
-    performance.clearResourceTimings();
-  })()`);
-};
-
-const instrumentedPages = new WeakSet<object>();
-
-const prepareEvidenceCapture = async (
-  page: InspectionBrowserSessionContext["page"],
-) => {
-  if (!instrumentedPages.has(page)) {
-    await page.addInitScript(EVIDENCE_INIT_SCRIPT);
-    instrumentedPages.add(page);
-  }
-
-  await page.evaluate(EVIDENCE_INIT_SCRIPT);
 };
 
 export const runToolVerification = async ({
@@ -466,7 +461,11 @@ export const runToolVerification = async ({
     progress: { value: 10, message: "Resuming the discovery browser session" },
   });
 
-  return browserSession.runExclusive(async ({ browser: stagehand, page }) => {
+  return browserSession.runExclusive(async ({
+    browser: stagehand,
+    page,
+    evidenceObserver,
+  }) => {
     const unsubscribeFromLogs = browserSession.subscribeToLogs((line) => {
       addLog(logs, startedAt, {
         source: "stagehand",
@@ -478,7 +477,6 @@ export const runToolVerification = async ({
 
     try {
       await validateInspectionUrl(targetUrl);
-      await prepareEvidenceCapture(page);
       recordTimeline("Browser session reused", getInspectionBrowserLabel());
 
       consoleListener = (message) => {
@@ -507,12 +505,7 @@ export const runToolVerification = async ({
       let liveTools = await page.listWebMCPTools({
         timeoutMs: TOOL_DISCOVERY_TIMEOUT_MS,
       });
-      let liveTool =
-        liveTools.find(
-          (tool) =>
-            tool.name === selectedTool.name &&
-            tool.frameId === selectedTool.frameId,
-        ) ?? liveTools.find((tool) => tool.name === selectedTool.name);
+      let liveTool = selectLiveTool(liveTools, selectedTool);
 
       if (!liveTool) {
         await page.goto(targetUrl, {
@@ -520,15 +513,11 @@ export const runToolVerification = async ({
           timeoutMs: NAVIGATION_TIMEOUT_MS,
         });
         await validateInspectionUrl(page.url());
+        await evidenceObserver.refresh();
         liveTools = await page.listWebMCPTools({
           timeoutMs: TOOL_DISCOVERY_TIMEOUT_MS,
         });
-        liveTool =
-          liveTools.find(
-            (tool) =>
-              tool.name === selectedTool.name &&
-              tool.frameId === selectedTool.frameId,
-          ) ?? liveTools.find((tool) => tool.name === selectedTool.name);
+        liveTool = selectLiveTool(liveTools, selectedTool);
       }
 
       if (!liveTool) {
@@ -549,8 +538,8 @@ export const runToolVerification = async ({
         section: "evidence",
         progress: { value: 42, message: "Capturing the baseline state" },
       });
-      const before = await captureSnapshot(stagehand, page);
-      await resetInvocationEvidence(page);
+      const before = await captureSnapshot(stagehand, page, evidenceObserver);
+      evidenceObserver.reset();
       recordTimeline(
         "Baseline captured",
         `${before.bodyText.length} visible characters · ${Object.keys(before.localStorage).length} local storage keys`,
@@ -587,9 +576,11 @@ export const runToolVerification = async ({
       );
 
       await page.waitForTimeout(350);
-      const after = await captureSnapshot(stagehand, page);
+      await evidenceObserver.refresh();
+      const after = await captureSnapshot(stagehand, page, evidenceObserver);
       const stateChanges = compareSnapshots(before, after);
       const network = toNetworkEntries(after.network);
+      const observedMutations = after.network.filter(isObservedMutationRequest);
 
       for (const runtimeError of after.runtimeErrors) {
         addLog(logs, startedAt, {
@@ -600,7 +591,12 @@ export const runToolVerification = async ({
       }
       for (const entry of network.slice(0, 20)) {
         recordTimeline(
-          /^(POST|PUT|PATCH|DELETE)$/i.test(entry.method)
+          observedMutations.some(
+            (candidate) =>
+              candidate.method === entry.method &&
+              safeUrlPath(candidate.url) === entry.path &&
+              String(candidate.status) === entry.status,
+          )
             ? "Network mutation"
             : "Network request",
           `${entry.method} ${entry.path} · ${entry.status}`,
@@ -631,12 +627,13 @@ export const runToolVerification = async ({
         },
       });
 
-      const mutatingRequests = network
-        .filter((entry) => /^(POST|PUT|PATCH|DELETE)$/i.test(entry.method))
-        .map((entry) => `${entry.method} ${entry.path} · ${entry.status}`);
+      const mutatingRequests = observedMutations.map(
+        (entry) =>
+          `${entry.method} ${safeUrlPath(entry.url)} · ${entry.status}`,
+      );
       const analysis = await analyzeToolVerification(
         {
-          tool: selectedTool,
+          tool,
           toolInput,
           toolOutput: result.output,
           invocationStatus: result.status,
@@ -665,7 +662,7 @@ export const runToolVerification = async ({
         verdict: analysis.verdict,
         durationMs: Date.now() - startedAt,
         stateChangeCount: stateChanges.length,
-        requestCount: network.length,
+        requestCount: after.network.length,
         logCount: logs.length,
       });
     } finally {

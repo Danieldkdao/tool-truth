@@ -5,8 +5,8 @@ import z from "zod";
 
 export const serverEnv = createEnv({
   server: {
-    BROWSERBASE_API_KEY: z.string().min(1),
-    OPENROUTER_API_KEY: z.string().min(1),
+    BROWSERBASE_API_KEY: z.string().min(1).optional(),
+    OPENROUTER_API_KEY: z.string().min(1).optional(),
     STAGEHAND_ENV: z.enum(["local", "browserbase"]).default("local"),
     NODE_ENV: z
       .enum(["development", "test", "production"])
