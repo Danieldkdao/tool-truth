@@ -6,10 +6,12 @@ import {
   createBrowserEvidenceObserver,
   type BrowserEvidenceObserver,
 } from "@/features/inspect/server/browser-evidence-observer";
-import { startInspectionNetworkProxy } from "@/features/inspect/server/inspection-network-proxy";
 import { createInspectionBrowser } from "@/features/inspect/server/stagehand-browser";
+import type { InspectionBrowserStartupReporter } from "@/features/inspect/server/stagehand-browser-shared";
 
-type InspectionBrowser = ReturnType<typeof createInspectionBrowser>;
+type InspectionBrowser = Awaited<
+  ReturnType<typeof createInspectionBrowser>
+>["browser"];
 type InspectionPage = ReturnType<InspectionBrowser["context"]["pages"]>[number];
 
 export type InspectionBrowserSessionContext = {
@@ -28,43 +30,71 @@ export type InspectionBrowserSession = {
   close: () => Promise<void>;
 };
 
-export const openInspectionBrowserSession = async () => {
+export class InspectionBrowserSessionUnavailableError extends Error {
+  constructor() {
+    super(
+      "The inspection browser connection ended before the verification started.",
+    );
+    this.name = "InspectionBrowserSessionUnavailableError";
+  }
+}
+
+const MAX_BUFFERED_STARTUP_LOGS = 100;
+
+export const openInspectionBrowserSession = async (
+  targetHostname: string,
+  reportStartup: InspectionBrowserStartupReporter,
+) => {
   const logReporters = new Set<(line: LogLine) => void>();
-  const networkProxy = await startInspectionNetworkProxy();
-  let browser: InspectionBrowser;
-  try {
-    browser = createInspectionBrowser((line) => {
+  const bufferedLogs: LogLine[] = [];
+  const { browser, initialize, closeEnvironment } = await createInspectionBrowser(
+    targetHostname,
+    (line) => {
+      if (logReporters.size === 0) {
+        if (bufferedLogs.length >= MAX_BUFFERED_STARTUP_LOGS) {
+          bufferedLogs.shift();
+        }
+        bufferedLogs.push(line);
+        return;
+      }
+
       for (const reporter of logReporters) reporter(line);
-    }, networkProxy.url);
-  } catch (error) {
-    await networkProxy.close().catch(() => undefined);
-    throw error;
-  }
+    },
+    reportStartup,
+  );
 
   try {
-    await browser.init();
+    await initialize(reportStartup);
   } catch (error) {
-    await browser.close().catch(() => undefined);
-    await networkProxy.close().catch(() => undefined);
+    void browser.close().catch(() => undefined);
+    void closeEnvironment().catch(() => undefined);
     throw error;
   }
 
-  if (!browser.context.pages()[0]) {
+  const browserbaseSessionId = browser.browserbaseSessionID;
+  if (browserbaseSessionId) {
+    console.info("ToolTruth Browserbase session opened", {
+      sessionId: browserbaseSessionId,
+    });
+  }
+
+  const browserContext = browser.context;
+  const initialPage = browserContext?.pages()[0];
+  if (!browserContext || !initialPage) {
     await browser.close().catch(() => undefined);
-    await networkProxy.close().catch(() => undefined);
+    await closeEnvironment().catch(() => undefined);
     throw new Error("The inspection browser did not create a page.");
   }
 
-  const initialPage = browser.context.pages()[0];
   let evidenceObserver: BrowserEvidenceObserver;
   try {
     evidenceObserver = await createBrowserEvidenceObserver(
       initialPage,
-      browser.context,
+      browserContext,
     );
   } catch (error) {
     await browser.close().catch(() => undefined);
-    await networkProxy.close().catch(() => undefined);
+    await closeEnvironment().catch(() => undefined);
     throw error;
   }
 
@@ -83,12 +113,17 @@ export const openInspectionBrowserSession = async () => {
     await previousOperation;
     try {
       if (closed) {
-        throw new Error("The inspection browser session is no longer available.");
+        throw new InspectionBrowserSessionUnavailableError();
       }
 
-      const page = browser.context.pages()[0];
+      const context = browser.context;
+      if (!context) {
+        throw new InspectionBrowserSessionUnavailableError();
+      }
+
+      const page = context.pages()[0];
       if (!page) {
-        throw new Error("The inspection browser session no longer has a page.");
+        throw new InspectionBrowserSessionUnavailableError();
       }
 
       await evidenceObserver.refresh();
@@ -100,6 +135,7 @@ export const openInspectionBrowserSession = async () => {
 
   const subscribeToLogs = (reporter: (line: LogLine) => void) => {
     logReporters.add(reporter);
+    for (const line of bufferedLogs.splice(0)) reporter(line);
     return () => logReporters.delete(reporter);
   };
 
@@ -109,8 +145,20 @@ export const openInspectionBrowserSession = async () => {
     await operationTail.catch(() => undefined);
     logReporters.clear();
     await evidenceObserver.dispose().catch(() => undefined);
-    await browser.close().catch(() => undefined);
-    await networkProxy.close().catch(() => undefined);
+    try {
+      await browser.close();
+      if (browserbaseSessionId) {
+        console.info("ToolTruth Browserbase session released", {
+          sessionId: browserbaseSessionId,
+        });
+      }
+    } catch (error) {
+      console.error("ToolTruth browser session cleanup failed", {
+        sessionId: browserbaseSessionId,
+        error,
+      });
+    }
+    await closeEnvironment().catch(() => undefined);
   };
 
   return {

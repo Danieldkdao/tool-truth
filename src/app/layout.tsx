@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Outfit, Fraunces, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
-import { WebMCPTools } from "@/components/webmcp-tools";
 import { cn } from "@/lib/utils";
 import { Toaster } from "@/components/ui/toast";
 
@@ -42,7 +41,6 @@ const RootLayout = ({ children }: LayoutProps<"/">) => {
       <body className="min-h-full flex flex-col">
         {children}
         <Toaster />
-        <WebMCPTools />
       </body>
     </html>
   );

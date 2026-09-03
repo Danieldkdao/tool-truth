@@ -1,7 +1,8 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
+import type { ReactNode } from "react";
 
+import { WebMCPTools } from "@/components/webmcp-tools";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -31,12 +32,7 @@ import {
   ExecutionEvidenceSectionSkeleton,
 } from "@/features/inspect/components/execution-evidence-section";
 import { InspectionErrorState } from "@/features/inspect/components/inspection-error-state";
-import type {
-  EvidenceTab,
-  ToolVerificationStatus,
-} from "@/features/inspect/components/inspection-data";
-import { useInspectionRunStream } from "@/features/inspect/hooks/use-inspection-run-stream";
-import { useToolVerification } from "@/features/inspect/hooks/use-tool-verification";
+import { useInspectionSessionController } from "@/features/inspect/hooks/use-inspection-session-controller";
 import { useMediaQuery } from "@/hooks/use-media-query";
 
 const DESKTOP_WORKBENCH_QUERY = "(min-width: 1024px)";
@@ -162,11 +158,21 @@ type InspectionWorkbenchProps = {
 
 export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
   const isDesktop = useMediaQuery(DESKTOP_WORKBENCH_QUERY);
-  const [selectedTool, setSelectedTool] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<EvidenceTab>("Timeline");
-  const { tools, toolDiscoveryError, runError, progress } =
-    useInspectionRunStream(runId);
-  const verification = useToolVerification(runId);
+  const session = useInspectionSessionController(runId);
+  const {
+    tools,
+    selectedToolId,
+    selectedTool,
+    activeEvidenceTab,
+    selectedVerification,
+    verificationRecords,
+    verificationStatuses,
+    isBusy,
+    isRunningAll,
+    toolDiscoveryError,
+    runError,
+    progress,
+  } = session.snapshot;
 
   if (runError) {
     const isNotFound = runError.code === "not_found";
@@ -191,20 +197,9 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
     );
   }
 
-  const activeToolId =
-    selectedTool && tools?.some((tool) => tool.id === selectedTool)
-      ? selectedTool
-      : (tools?.[0]?.id ?? null);
-
-  const activeTool = tools?.find((tool) => tool.id === activeToolId) ?? null;
-  const activeVerification = activeToolId
-    ? verification.records[activeToolId]
-    : undefined;
-  const verificationIsBusy =
-    verification.isAnyRunning || verification.isRunningAll;
   const displayTools =
     tools?.map((tool) => {
-      const status = verification.records[tool.id]?.status;
+      const status = verificationRecords[tool.id]?.status;
 
       return {
         ...tool,
@@ -220,30 +215,17 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
                   : tool.result,
       };
     }) ?? null;
-  const verificationStatuses =
-    tools?.reduce<Record<string, ToolVerificationStatus | undefined>>(
-      (statuses, tool) => {
-        statuses[tool.id] = verification.records[tool.id]?.status;
-        return statuses;
-      },
-      {},
-    ) ?? {};
-
   const toolsPanel = toolDiscoveryError ? (
     <DetectedToolsSectionError message={toolDiscoveryError} />
   ) : displayTools ? (
     <DetectedToolsSection
       tools={displayTools}
-      selectedTool={activeToolId}
+      selectedTool={selectedToolId}
       statuses={verificationStatuses}
-      isRunningAll={verification.isRunningAll}
-      isBusy={verificationIsBusy}
-      onSelectTool={setSelectedTool}
-      onRunAllVerifications={() =>
-        void verification.runAllVerifications(
-          displayTools.map((tool) => tool.id),
-        )
-      }
+      isRunningAll={isRunningAll}
+      isBusy={isBusy}
+      onSelectTool={(toolId) => session.focusEvidence({ toolId })}
+      onRunAllVerifications={() => void session.runAllVerifications()}
     />
   ) : (
     <DetectedToolsSectionProgress progress={progress.tools} />
@@ -251,38 +233,38 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
 
   const browserPanel = tools ? (
     <BrowserPreviewLocalPlaceholder
-      toolName={activeTool?.name}
-      verificationStatus={activeVerification?.status}
+      toolName={selectedTool?.name}
+      verificationStatus={selectedVerification?.status}
     />
   ) : (
     <BrowserPreviewSectionProgress progress={progress.browser} />
   );
 
   const evidencePanel =
-    activeVerification?.status === "running" ? (
+    selectedVerification?.status === "running" ? (
       <ExecutionEvidenceSectionProgress
-        progress={activeVerification.evidenceProgress}
+        progress={selectedVerification.evidenceProgress}
       />
-    ) : activeVerification?.evidenceData ? (
+    ) : selectedVerification?.evidenceData ? (
       <ExecutionEvidenceSection
-        data={activeVerification.evidenceData}
-        activeTab={activeTab}
-        onActiveTabChange={setActiveTab}
+        data={selectedVerification.evidenceData}
+        activeTab={activeEvidenceTab}
+        onActiveTabChange={(tab) => session.focusEvidence({ tab })}
       />
     ) : (
       <ExecutionEvidenceSectionEmpty
-        error={activeVerification?.error ?? null}
+        error={selectedVerification?.error ?? null}
       />
     );
 
-  const analysisPanel = activeTool ? (
+  const analysisPanel = selectedTool ? (
     <ContractAnalysisSection
-      data={activeVerification?.analysisData ?? null}
-      selectedTool={activeTool}
-      isRunning={activeVerification?.status === "running"}
-      isBusy={verificationIsBusy}
-      error={activeVerification?.error ?? null}
-      onRunVerification={() => void verification.startVerification(activeTool.id)}
+      data={selectedVerification?.analysisData ?? null}
+      selectedTool={selectedTool}
+      isRunning={selectedVerification?.status === "running"}
+      isBusy={isBusy}
+      error={selectedVerification?.error ?? null}
+      onRunVerification={() => void session.startVerification()}
     />
   ) : (
     <ContractAnalysisSectionProgress progress={progress.analysis} />
@@ -295,10 +277,15 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
     analysisPanel,
   };
 
-  return isDesktop ? (
-    <DesktopWorkbenchLayout {...layoutProps} />
-  ) : (
-    <MobileWorkbenchLayout {...layoutProps} />
+  return (
+    <>
+      <WebMCPTools controller={session} />
+      {isDesktop ? (
+        <DesktopWorkbenchLayout {...layoutProps} />
+      ) : (
+        <MobileWorkbenchLayout {...layoutProps} />
+      )}
+    </>
   );
 };
 

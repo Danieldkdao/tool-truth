@@ -61,6 +61,12 @@ type AnalysisInput = {
 
 type AiActivityReporter = (message: string) => void;
 
+const throwIfAborted = (signal?: AbortSignal) => {
+  if (signal?.aborted) {
+    throw new DOMException("The verification was cancelled.", "AbortError");
+  }
+};
+
 const parseInputSchema = (schema: DetectedTool["inputSchema"]) => {
   if (!schema) {
     return undefined;
@@ -283,7 +289,9 @@ const normalizeGeneratedInput = (
 export const generateSafeToolInput = async (
   tool: DetectedTool,
   reportActivity: AiActivityReporter,
+  signal?: AbortSignal,
 ) => {
+  throwIfAborted(signal);
   const parsedSchema = parseInputSchema(tool.inputSchema);
   const fallbackInput = synthesizeInput(parsedSchema);
 
@@ -305,6 +313,7 @@ export const generateSafeToolInput = async (
     const result = await generateText({
       model,
       temperature: 0,
+      abortSignal: signal,
       timeout: SAFE_INPUT_TIMEOUT_MS,
       prompt: [
         "Create harmless synthetic input for a WebMCP verification run.",
@@ -317,6 +326,7 @@ export const generateSafeToolInput = async (
       ].join("\n"),
     });
 
+    throwIfAborted(signal);
     const generated = parseJsonResponse(result.text, generatedInputSchema);
     const parsedInput = JSON.parse(generated.inputJson) as unknown;
     if (isRecord(parsedInput)) {
@@ -324,6 +334,7 @@ export const generateSafeToolInput = async (
       return normalizeGeneratedInput(parsedInput, parsedSchema, fallbackInput);
     }
   } catch (error) {
+    throwIfAborted(signal);
     reportActivity(
       `AI input generation failed; using deterministic schema defaults (${error instanceof Error ? error.message : "unknown error"})`,
     );
@@ -402,7 +413,9 @@ const createFallbackFinding = (
 export const analyzeToolVerification = async (
   input: AnalysisInput,
   reportActivity: AiActivityReporter,
+  signal?: AbortSignal,
 ): Promise<ContractAnalysisData> => {
+  throwIfAborted(signal);
   const consequentialStateChanges = input.stateChanges.filter(
     ([path]) =>
       path === "page.url" ||
@@ -446,6 +459,7 @@ export const analyzeToolVerification = async (
     const result = await generateText({
       model,
       temperature: 0,
+      abortSignal: signal,
       timeout: ANALYSIS_TIMEOUT_MS,
       prompt: [
         "Summarize a WebMCP behavioral verification result.",
@@ -466,6 +480,7 @@ export const analyzeToolVerification = async (
       ].join("\n"),
     });
 
+    throwIfAborted(signal);
     const generated = parseJsonResponse(result.text, generatedAnalysisSchema);
 
     finding = {
@@ -477,6 +492,7 @@ export const analyzeToolVerification = async (
     suggestedRepair = generated.suggestedRepair;
     reportActivity("AI evidence summary completed");
   } catch (error) {
+    throwIfAborted(signal);
     reportActivity(
       `AI evidence summary failed; using deterministic analysis (${error instanceof Error ? error.message : "unknown error"})`,
     );

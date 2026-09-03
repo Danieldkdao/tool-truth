@@ -1,5 +1,6 @@
 import type { InspectionStreamEvent } from "@/features/inspect/components/inspection-stream";
 import { discoverWebMcpTools } from "@/features/inspect/server/discover-webmcp-tools";
+import { getInspectionBrowserFailureMessage } from "@/features/inspect/server/stagehand-browser";
 import {
   disposeInspectionBrowserSession,
   getInspectionRun,
@@ -63,19 +64,30 @@ export const GET = async (
         },
       });
 
-      const browserSession = getOrCreateInspectionBrowserSession(
-        run,
-        openInspectionBrowserSession,
-      );
-      void getOrCreateToolDiscovery(run, async () =>
-        discoverWebMcpTools(
-          run.targetUrl,
-          (progress) => {
-            send({ kind: "section.progress", section: "tools", progress });
-          },
-          await browserSession,
-        ),
-      )
+      void getOrCreateToolDiscovery(run, async () => {
+        const browserSession = getOrCreateInspectionBrowserSession(
+          run,
+          () =>
+            openInspectionBrowserSession(
+              run.targetHostname,
+              (progress) => {
+                send({ kind: "section.progress", section: "tools", progress });
+              },
+            ),
+        );
+
+        try {
+          return await discoverWebMcpTools(
+            run.targetUrl,
+            (progress) => {
+              send({ kind: "section.progress", section: "tools", progress });
+            },
+            await browserSession,
+          );
+        } finally {
+          await disposeInspectionBrowserSession(run, browserSession);
+        }
+      })
         .then(async (tools) => {
           for (const tool of tools) {
             send({ kind: "tool.discovered", data: tool });
@@ -85,7 +97,6 @@ export const GET = async (
           send({ kind: "tools.ready", data: tools });
         })
         .catch((error: unknown) => {
-          disposeInspectionBrowserSession(run);
           console.error("WebMCP tool discovery failed", {
             runId,
             targetHostname: run.targetHostname,
@@ -93,8 +104,7 @@ export const GET = async (
           });
           send({
             kind: "tools.failed",
-            message:
-              "The website could not be opened in the discovery browser, or its WebMCP tools could not be read.",
+            message: getInspectionBrowserFailureMessage(error),
           });
         })
         .finally(() => {

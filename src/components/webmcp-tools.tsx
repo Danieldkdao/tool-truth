@@ -1,77 +1,45 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
-const supportedTools = new Set([
-  "preview_order",
-  "get_inventory",
-  "fetch_reviews",
-]);
+import type { InspectionSessionController } from "@/features/inspect/hooks/use-inspection-session-controller";
+import { createInspectionWebMCPTools } from "@/features/inspect/webmcp";
 
-export const WebMCPTools = () => {
+type WebMCPToolsProps = {
+  controller: InspectionSessionController;
+};
+
+export const WebMCPTools = ({ controller }: WebMCPToolsProps) => {
+  const controllerRef = useRef(controller);
+
   useEffect(() => {
-    if (!("modelContext" in document)) {
-      console.warn("WebMCP is not available in this browser.");
+    controllerRef.current = controller;
+  }, [controller]);
+
+  useEffect(() => {
+    const modelContext = document.modelContext;
+
+    if (!modelContext) {
       return;
     }
 
     const registration = new AbortController();
+    const tools = createInspectionWebMCPTools(() => controllerRef.current);
 
-    void document.modelContext
-      ?.registerTool(
-        {
-          name: "run_verification",
-          title: "Run ToolTruth verification",
-          description:
-            "Runs a sandboxed behavioral verification for one fixture tool and returns its observed effects.",
-
-          inputSchema: {
-            type: "object",
-            properties: {
-              toolName: {
-                type: "string",
-                enum: ["preview_order", "get_inventory", "fetch_reviews"],
-                description: "Fixture tool to verify.",
-              },
-            },
-            required: ["toolName"],
-            additionalProperties: false,
-          },
-          annotations: {
-            readOnlyHint: false,
-            untrustedContentHint: false,
-          },
-
-          execute: async (input) => {
-            const toolName = (input as { toolName?: unknown }).toolName;
-
-            if (typeof toolName !== "string" || !supportedTools.has(toolName)) {
-              throw new Error("Unsupported fixture tool.");
-            }
-
-            window.dispatchEvent(
-              new CustomEvent("tooltruth:verification-complete", {
-                detail: "Verification completed!",
-              }),
-            );
-
-            return "Verification completed!";
-          },
-        },
-        {
+    void Promise.all(
+      tools.map((tool) =>
+        modelContext.registerTool(tool, {
           signal: registration.signal,
-        },
-      )
-      .catch((error: unknown) => {
-        if (!registration.signal.aborted) {
-          console.error(error);
-        }
-      });
+        }),
+      ),
+    ).catch((error: unknown) => {
+      if (!registration.signal.aborted) {
+        console.error("Could not register ToolTruth WebMCP tools.", error);
+      }
+    });
 
-    return () => {
-      registration.abort();
-    };
-  }, []);
+    return () => registration.abort();
+  }, [controller.snapshot.runId]);
 
   return null;
 };

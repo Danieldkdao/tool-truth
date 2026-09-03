@@ -6,6 +6,7 @@ import type {
   ConsoleMessage,
   LogLine,
   WebMCPTool,
+  WebMCPToolInvocation,
   WebMCPToolResult,
 } from "@browserbasehq/stagehand";
 
@@ -113,7 +114,49 @@ type RunToolVerificationOptions = {
   targetUrl: string;
   selectedTool: DetectedTool;
   browserSession: InspectionBrowserSession;
+  releaseBrowser: () => Promise<void>;
+  signal: AbortSignal;
   report: VerificationReporter;
+};
+
+const createAbortError = () => {
+  return new DOMException("The verification was cancelled.", "AbortError");
+};
+
+const throwIfAborted = (signal: AbortSignal) => {
+  if (signal.aborted) throw createAbortError();
+};
+
+const waitForInvocationResult = (
+  invocation: WebMCPToolInvocation,
+  signal: AbortSignal,
+) => {
+  if (signal.aborted) {
+    void invocation.cancel().catch(() => undefined);
+    return Promise.reject(createAbortError());
+  }
+
+  return new Promise<WebMCPToolResult>((resolve, reject) => {
+    let handleAbort: () => void = () => undefined;
+    const cleanup = () => signal.removeEventListener("abort", handleAbort);
+    handleAbort = () => {
+      cleanup();
+      void invocation.cancel().catch(() => undefined);
+      reject(createAbortError());
+    };
+
+    signal.addEventListener("abort", handleAbort, { once: true });
+    invocation.result.then(
+      (result) => {
+        cleanup();
+        resolve(result);
+      },
+      (error: unknown) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
 };
 
 const hashValue = (value: string | Buffer): SafeValue => {
@@ -439,8 +482,11 @@ export const runToolVerification = async ({
   targetUrl,
   selectedTool,
   browserSession,
+  releaseBrowser,
+  signal,
   report,
 }: RunToolVerificationOptions) => {
+  throwIfAborted(signal);
   const startedAt = Date.now();
   const logs: EvidenceLogEntry[] = [];
   const timeline: TimelineEntry[] = [];
@@ -458,14 +504,18 @@ export const runToolVerification = async ({
   report({
     kind: "section.progress",
     section: "evidence",
-    progress: { value: 10, message: "Resuming the discovery browser session" },
+    progress: {
+      value: 10,
+      message: "Preparing a disposable verification browser",
+    },
   });
 
-  return browserSession.runExclusive(async ({
+  const captured = await browserSession.runExclusive(async ({
     browser: stagehand,
     page,
     evidenceObserver,
   }) => {
+    throwIfAborted(signal);
     const unsubscribeFromLogs = browserSession.subscribeToLogs((line) => {
       addLog(logs, startedAt, {
         source: "stagehand",
@@ -477,7 +527,8 @@ export const runToolVerification = async ({
 
     try {
       await validateInspectionUrl(targetUrl);
-      recordTimeline("Browser session reused", getInspectionBrowserLabel());
+      throwIfAborted(signal);
+      recordTimeline("Browser session ready", getInspectionBrowserLabel());
 
       consoleListener = (message) => {
         const type = message.type();
@@ -499,12 +550,13 @@ export const runToolVerification = async ({
       report({
         kind: "section.progress",
         section: "evidence",
-        progress: { value: 24, message: "Preparing the retained page" },
+        progress: { value: 24, message: "Loading the target page" },
       });
 
       let liveTools = await page.listWebMCPTools({
         timeoutMs: TOOL_DISCOVERY_TIMEOUT_MS,
       });
+      throwIfAborted(signal);
       let liveTool = selectLiveTool(liveTools, selectedTool);
 
       if (!liveTool) {
@@ -512,11 +564,13 @@ export const runToolVerification = async ({
           waitUntil: "load",
           timeoutMs: NAVIGATION_TIMEOUT_MS,
         });
+        throwIfAborted(signal);
         await validateInspectionUrl(page.url());
         await evidenceObserver.refresh();
         liveTools = await page.listWebMCPTools({
           timeoutMs: TOOL_DISCOVERY_TIMEOUT_MS,
         });
+        throwIfAborted(signal);
         liveTool = selectLiveTool(liveTools, selectedTool);
       }
 
@@ -530,7 +584,12 @@ export const runToolVerification = async ({
       recordTimeline("Target ready", safeUrlPath(page.url()));
 
       const tool = toDetectedTool(liveTool);
-      const toolInput = await generateSafeToolInput(tool, recordAiActivity);
+      const toolInput = await generateSafeToolInput(
+        tool,
+        recordAiActivity,
+        signal,
+      );
+      throwIfAborted(signal);
       recordTimeline("Tool input prepared", stringifyCompact(toolInput));
 
       report({
@@ -539,6 +598,7 @@ export const runToolVerification = async ({
         progress: { value: 42, message: "Capturing the baseline state" },
       });
       const before = await captureSnapshot(stagehand, page, evidenceObserver);
+      throwIfAborted(signal);
       evidenceObserver.reset();
       recordTimeline(
         "Baseline captured",
@@ -550,6 +610,7 @@ export const runToolVerification = async ({
         section: "evidence",
         progress: { value: 58, message: `Invoking ${tool.name}` },
       });
+      throwIfAborted(signal);
       const invocationStartedAt = Date.now();
       const invocation = await page.invokeWebMCPTool(tool.name, toolInput, {
         frameId: liveTool.frameId,
@@ -562,8 +623,9 @@ export const runToolVerification = async ({
 
       let result: WebMCPToolResult;
       try {
-        result = await invocation.result;
+        result = await waitForInvocationResult(invocation, signal);
       } catch (error) {
+        throwIfAborted(signal);
         result = {
           invocationId: invocation.invocationId,
           status: "Error",
@@ -576,8 +638,10 @@ export const runToolVerification = async ({
       );
 
       await page.waitForTimeout(350);
+      throwIfAborted(signal);
       await evidenceObserver.refresh();
       const after = await captureSnapshot(stagehand, page, evidenceObserver);
+      throwIfAborted(signal);
       const stateChanges = compareSnapshots(before, after);
       const network = toNetworkEntries(after.network);
       const observedMutations = after.network.filter(isObservedMutationRequest);
@@ -618,56 +682,76 @@ export const runToolVerification = async ({
       };
 
       report({ kind: "evidence.ready", toolId: selectedTool.id, data: evidence });
-      report({
-        kind: "section.progress",
-        section: "analysis",
-        progress: {
-          value: 68,
-          message: "Comparing the contract with observed behavior",
-        },
-      });
-
-      const mutatingRequests = observedMutations.map(
-        (entry) =>
-          `${entry.method} ${safeUrlPath(entry.url)} · ${entry.status}`,
-      );
-      const analysis = await analyzeToolVerification(
-        {
-          tool,
-          toolInput,
-          toolOutput: result.output,
-          invocationStatus: result.status,
-          invocationError:
-            result.errorText ??
-            (result.exception ? stringifyCompact(result.exception) : undefined),
-          stateChanges,
-          mutatingRequests,
-          consoleErrors: logs
-            .filter((entry) => entry.level === "error")
-            .map((entry) => entry.message),
-          sandboxLabel: getInspectionBrowserLabel(),
-        },
-        recordAiActivity,
-      );
-
-      evidence.logs = [...logs];
-      report({ kind: "evidence.ready", toolId: selectedTool.id, data: evidence });
-      report({ kind: "analysis.ready", toolId: selectedTool.id, data: analysis });
-      report({ kind: "probe.completed", toolId: selectedTool.id });
-
-      console.info("ToolTruth verification completed", {
-        runId,
-        probeId,
-        tool: tool.name,
-        verdict: analysis.verdict,
-        durationMs: Date.now() - startedAt,
-        stateChangeCount: stateChanges.length,
+      return {
+        evidence,
+        observedMutations,
         requestCount: after.network.length,
-        logCount: logs.length,
-      });
+        result,
+        stateChanges,
+        tool,
+        toolInput,
+      };
     } finally {
       if (page && consoleListener) page.off("console", consoleListener);
       unsubscribeFromLogs();
     }
+  });
+
+  await releaseBrowser();
+  throwIfAborted(signal);
+
+  report({
+    kind: "section.progress",
+    section: "analysis",
+    progress: {
+      value: 68,
+      message: "Comparing the contract with observed behavior",
+    },
+  });
+
+  const mutatingRequests = captured.observedMutations.map(
+    (entry) => `${entry.method} ${safeUrlPath(entry.url)} · ${entry.status}`,
+  );
+  const analysis = await analyzeToolVerification(
+    {
+      tool: captured.tool,
+      toolInput: captured.toolInput,
+      toolOutput: captured.result.output,
+      invocationStatus: captured.result.status,
+      invocationError:
+        captured.result.errorText ??
+        (captured.result.exception
+          ? stringifyCompact(captured.result.exception)
+          : undefined),
+      stateChanges: captured.stateChanges,
+      mutatingRequests,
+      consoleErrors: logs
+        .filter((entry) => entry.level === "error")
+        .map((entry) => entry.message),
+      sandboxLabel: getInspectionBrowserLabel(),
+    },
+    recordAiActivity,
+    signal,
+  );
+  throwIfAborted(signal);
+
+  captured.evidence.logs = [...logs];
+  report({
+    kind: "evidence.ready",
+    toolId: selectedTool.id,
+    data: captured.evidence,
+  });
+  report({ kind: "analysis.ready", toolId: selectedTool.id, data: analysis });
+  report({ kind: "probe.completed", toolId: selectedTool.id });
+
+  console.info("ToolTruth verification completed", {
+    runId,
+    probeId,
+    tool: captured.tool.name,
+    verdict: analysis.verdict,
+    durationMs: Date.now() - startedAt,
+    stateChangeCount: captured.stateChanges.length,
+    requestCount: captured.requestCount,
+    logCount: logs.length,
   });
 };
