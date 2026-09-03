@@ -456,8 +456,11 @@ export const analyzeToolVerification = async (
         ? [result.evaluation]
         : [],
     );
+    const decisionEvaluations = semantic.adjudication
+      ? [semantic.adjudication]
+      : completedEvaluations;
     const summaries = [
-      ...new Set(completedEvaluations.map((evaluation) => evaluation.summary)),
+      ...new Set(decisionEvaluations.map((evaluation) => evaluation.summary)),
     ];
     const verdict: ContractAnalysisData["verdict"] =
       semantic.verdict === "not_pass" ? "failed" : semantic.verdict;
@@ -469,6 +472,8 @@ export const analyzeToolVerification = async (
           ? "Behavior matches the declared contract"
           : verdict === "failed"
             ? "Behavior does not match the declared contract"
+            : semantic.adjudication
+              ? "AI adjudication could not resolve the evidence"
             : semantic.consensus === "disagreement"
               ? "AI evaluators could not reach consensus"
               : "The evidence was not sufficient for a verdict",
@@ -485,7 +490,7 @@ export const analyzeToolVerification = async (
     };
     const repairSuggestions = [
       ...new Set(
-        completedEvaluations.map((evaluation) => evaluation.suggestedRepair),
+        decisionEvaluations.map((evaluation) => evaluation.suggestedRepair),
       ),
     ];
 
@@ -496,13 +501,18 @@ export const analyzeToolVerification = async (
       sandboxLabel: input.sandboxLabel,
       suggestedRepair:
         repairSuggestions.join(" ") ||
-        "Review the captured evidence and rerun the verification when both semantic evaluators are available.",
+        (semantic.consensus === "disagreement"
+          ? "Review the captured evidence and rerun the verification when conditional adjudication is available."
+          : "Review the captured evidence and rerun the verification when both semantic evaluators are available."),
       evidenceStatus: semantic.evidenceStatus,
       deterministic,
       evaluators: semantic.evaluators,
+      adjudication: semantic.adjudication,
       consensus: semantic.consensus,
       decisionBasis:
-        semantic.consensus === "agreement" && verdict !== "inconclusive"
+        semantic.adjudication
+          ? "adjudication"
+          : semantic.consensus === "agreement" && verdict !== "inconclusive"
           ? "evaluator_consensus"
           : "insufficient_evidence",
     };

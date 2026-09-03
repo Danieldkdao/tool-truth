@@ -162,6 +162,7 @@ export type ContractAnalysisData = {
     facts: DeterministicFact[];
   };
   evaluators: SemanticEvaluatorResult[];
+  adjudication?: SemanticEvaluation;
   consensus:
     | "not_required"
     | "agreement"
@@ -170,6 +171,7 @@ export type ContractAnalysisData = {
   decisionBasis:
     | "hard_evidence"
     | "evaluator_consensus"
+    | "adjudication"
     | "insufficient_evidence";
 };
 

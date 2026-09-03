@@ -144,15 +144,21 @@ export const ContractAnalysisSection = ({
                 : verdict === "failed"
                   ? data?.decisionBasis === "hard_evidence"
                     ? `${data.unexpectedStateChanges} unexpected changes were confirmed by deterministic evidence.`
-                    : "Both semantic evaluators found that the observed behavior did not satisfy the declared contract."
+                    : data?.decisionBasis === "adjudication"
+                      ? "A conditional adjudicator resolved the evaluator disagreement and found that the observed behavior did not satisfy the declared contract."
+                      : "Both semantic evaluators found that the observed behavior did not satisfy the declared contract."
                   : isInconclusive
-                    ? data?.consensus === "disagreement"
-                      ? "The two semantic evaluators disagreed, so ToolTruth did not force a verdict."
+                    ? data?.decisionBasis === "adjudication"
+                      ? "The conditional adjudicator found that the available evidence could not reliably resolve the evaluator disagreement."
+                      : data?.consensus === "disagreement"
+                        ? "The two semantic evaluators disagreed and adjudication was unavailable, so ToolTruth did not force a verdict."
                       : data?.consensus === "agreement"
                         ? "Both semantic evaluators agreed that the available evidence was insufficient for a reliable verdict."
                         : "Two valid semantic evaluations were not available, so ToolTruth did not force a verdict."
                   : hasPassed
-                    ? data?.decisionBasis === "evaluator_consensus"
+                    ? data?.decisionBasis === "adjudication"
+                      ? "A conditional adjudicator resolved the evaluator disagreement and found that the evidence supports the declared behavior."
+                      : data?.decisionBasis === "evaluator_consensus"
                       ? "Both semantic evaluators agreed that the evidence supports the declared behavior."
                       : "No behavioral mismatch was observed in this run."
                     : "Run the selected tool in an isolated browser to test its claims.")}
@@ -214,7 +220,9 @@ export const ContractAnalysisSection = ({
               ? "The deterministic engine found an indisputable result, so AI could explain it but could not override it."
               : data.decisionBasis === "evaluator_consensus"
                 ? "No hard violation was found. Two independent semantic evaluations agreed on the final verdict."
-                : "No hard violation was found, but the semantic evaluation layer could not establish consensus."}
+                : data.decisionBasis === "adjudication"
+                  ? "No hard violation was found. The primary evaluators disagreed, so a conditional third model resolved the disputed claims from the original evidence."
+                  : "No hard violation was found, but the semantic evaluation layer could not establish consensus."}
           </p>
           <p className="mt-2 font-medium text-muted-foreground">
             Evidence packet: {data.evidenceStatus}
@@ -295,6 +303,52 @@ export const ContractAnalysisSection = ({
                 );
               })}
             </div>
+          )}
+
+          {data.adjudication && (
+            <article className="mt-5 rounded-lg border border-primary/30 bg-primary/[0.045] p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="font-sans font-semibold">Conditional adjudication</h4>
+                <p className="font-medium text-muted-foreground">
+                  {data.adjudication.verdict.replace("_", " ")} · {Math.round(data.adjudication.confidence * 100)}% confidence
+                </p>
+              </div>
+              <p className="mt-3 leading-7 text-foreground/85">
+                {data.adjudication.summary}
+              </p>
+              <details className="mt-3">
+                <summary className="cursor-pointer font-medium text-primary">
+                  Review adjudicated requirement evidence
+                </summary>
+                <ul className="mt-3 space-y-3 border-l-2 border-border pl-4">
+                  {data.adjudication.requirements.map((requirement, index) => (
+                    <li key={`${requirement.requirement}-${index}`}>
+                      <p className="font-medium">
+                        {requirement.status}: {requirement.requirement}
+                      </p>
+                      <p className="mt-1 leading-7 text-muted-foreground">
+                        {requirement.reason}
+                      </p>
+                      <p className="mt-1 break-all font-mono text-muted-foreground">
+                        Evidence: {requirement.evidenceIds.join(", ") || "none"}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+                {data.adjudication.uncertainties.length > 0 && (
+                  <div className="mt-4 border-l-2 border-amber-500/50 pl-4">
+                    <p className="font-medium text-amber-700 dark:text-amber-400">
+                      Uncertainties
+                    </p>
+                    <ul className="mt-2 space-y-2 text-muted-foreground">
+                      {data.adjudication.uncertainties.map((uncertainty, index) => (
+                        <li key={`${uncertainty}-${index}`}>{uncertainty}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </details>
+            </article>
           )}
         </section>
       )}
