@@ -46,7 +46,7 @@ const inspectionRuns =
 
 globalForInspectionRuns.toolTruthInspectionRuns = inspectionRuns;
 
-const closeRunBrowserSession = (run: InspectionRun) => {
+const closeRunBrowserSession = async (run: InspectionRun) => {
   if (run.browserSessionExpiration) {
     clearTimeout(run.browserSessionExpiration);
     run.browserSessionExpiration = undefined;
@@ -55,7 +55,7 @@ const closeRunBrowserSession = (run: InspectionRun) => {
   const session = run.browserSession;
   run.browserSession = undefined;
   if (session) {
-    void session
+    await session
       .then((browserSession) => browserSession.close())
       .catch(() => undefined);
   }
@@ -63,7 +63,7 @@ const closeRunBrowserSession = (run: InspectionRun) => {
 
 const deleteInspectionRun = (runId: string, run: InspectionRun) => {
   inspectionRuns.delete(runId);
-  closeRunBrowserSession(run);
+  void closeRunBrowserSession(run);
 };
 
 const deleteExpiredRuns = (now = Date.now()) => {
@@ -144,7 +144,7 @@ export const getInspectionBrowserSession = (run: InspectionRun) => {
 };
 
 export const disposeInspectionBrowserSession = (run: InspectionRun) => {
-  closeRunBrowserSession(run);
+  return closeRunBrowserSession(run);
 };
 
 export const getOrCreateToolDiscovery = (

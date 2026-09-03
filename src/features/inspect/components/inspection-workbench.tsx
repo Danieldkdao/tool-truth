@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 
+import { WebMCPTools } from "@/components/webmcp-tools";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -276,10 +277,15 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
     analysisPanel,
   };
 
-  return isDesktop ? (
-    <DesktopWorkbenchLayout {...layoutProps} />
-  ) : (
-    <MobileWorkbenchLayout {...layoutProps} />
+  return (
+    <>
+      <WebMCPTools controller={session} />
+      {isDesktop ? (
+        <DesktopWorkbenchLayout {...layoutProps} />
+      ) : (
+        <MobileWorkbenchLayout {...layoutProps} />
+      )}
+    </>
   );
 };
 

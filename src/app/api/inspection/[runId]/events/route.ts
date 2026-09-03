@@ -1,5 +1,6 @@
 import type { InspectionStreamEvent } from "@/features/inspect/components/inspection-stream";
 import { discoverWebMcpTools } from "@/features/inspect/server/discover-webmcp-tools";
+import { getInspectionBrowserFailureMessage } from "@/features/inspect/server/stagehand-browser";
 import {
   disposeInspectionBrowserSession,
   getInspectionRun,
@@ -65,7 +66,10 @@ export const GET = async (
 
       const browserSession = getOrCreateInspectionBrowserSession(
         run,
-        openInspectionBrowserSession,
+        () =>
+          openInspectionBrowserSession((progress) => {
+            send({ kind: "section.progress", section: "tools", progress });
+          }),
       );
       void getOrCreateToolDiscovery(run, async () =>
         discoverWebMcpTools(
@@ -85,7 +89,7 @@ export const GET = async (
           send({ kind: "tools.ready", data: tools });
         })
         .catch((error: unknown) => {
-          disposeInspectionBrowserSession(run);
+          void disposeInspectionBrowserSession(run);
           console.error("WebMCP tool discovery failed", {
             runId,
             targetHostname: run.targetHostname,
@@ -93,8 +97,7 @@ export const GET = async (
           });
           send({
             kind: "tools.failed",
-            message:
-              "The website could not be opened in the discovery browser, or its WebMCP tools could not be read.",
+            message: getInspectionBrowserFailureMessage(error),
           });
         })
         .finally(() => {

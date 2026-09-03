@@ -1,5 +1,6 @@
 import type { VerificationStreamEvent } from "@/features/inspect/components/inspection-stream";
 import {
+  disposeInspectionBrowserSession,
   getInspectionBrowserSession,
   getInspectionProbe,
   getInspectionRun,
@@ -8,6 +9,7 @@ import {
   subscribeToInspectionProbe,
 } from "@/features/inspect/server/inspection-run-store";
 import { runToolVerification } from "@/features/inspect/server/run-tool-verification";
+import { shouldCloseInspectionBrowserAfterProbe } from "@/features/inspect/server/stagehand-browser";
 
 type ProbeParams = {
   params: Promise<{ runId: string; probeId: string }>;
@@ -79,7 +81,9 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
         if (isTerminalEvent(event)) close();
       };
 
-      controller.enqueue(encoder.encode("retry: 1500\n: verification stream ready\n\n"));
+      controller.enqueue(
+        encoder.encode("retry: 1500\n: verification stream ready\n\n"),
+      );
       send({
         kind: "probe.connected",
         probeId: probe.id,
@@ -118,6 +122,10 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
                 ? error.message
                 : "The verification could not be completed.",
           });
+        } finally {
+          if (shouldCloseInspectionBrowserAfterProbe()) {
+            await disposeInspectionBrowserSession(run);
+          }
         }
       });
 
