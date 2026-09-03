@@ -7,6 +7,10 @@ export const inspectFormSchema = z.object({
     .min(1, "Enter a WebMCP application URL.")
     .max(2048, "The URL is too long.")
     .pipe(z.httpUrl("Enter a valid URL, including http:// or https://.")),
+  password: z
+    .string()
+    .min(1, "Enter the inspection password.")
+    .max(256, "The inspection password is too long."),
 });
 
 export type InspectFormValues = z.infer<typeof inspectFormSchema>;

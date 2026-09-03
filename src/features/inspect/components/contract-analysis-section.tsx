@@ -1,4 +1,4 @@
-import { Download, Play } from "lucide-react";
+import { Play } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -76,10 +76,6 @@ export const ContractAnalysisSection = ({
   const hasPassed = verdict === "passed";
   const isInconclusive = verdict === "inconclusive";
   const isError = verdict === "error";
-  const hasSuggestedRepair =
-    verdict === "failed" && Boolean(data?.suggestedRepair.trim());
-  const canExportEvidenceReceipt =
-    verdict === "failed" && Boolean(recordedFinding);
   const hasRun = Boolean(data || error);
 
   return (
@@ -380,24 +376,6 @@ export const ContractAnalysisSection = ({
           {data?.suggestedRepair ??
             "A repair recommendation will appear after the observed behavior is compared with the tool contract."}
         </p>
-        <Button
-          variant="link"
-          disabled={!hasSuggestedRepair}
-          className="mt-4 min-h-10 px-0 text-base font-semibold disabled:text-muted-foreground disabled:no-underline"
-        >
-          Review proposed change
-        </Button>
-      </section>
-
-      <section className="border-t border-border px-6 py-5">
-        <Button
-          variant="ghost"
-          disabled={!canExportEvidenceReceipt}
-          className="min-h-10 px-0 text-base font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground"
-        >
-          <Download className="size-4" aria-hidden="true" />
-          Export evidence receipt
-        </Button>
       </section>
     </aside>
   );

@@ -27,6 +27,18 @@ BROWSERBASE_API_KEY=...
 BROWSERBASE_PROJECT_ID=...
 ```
 
+Inspection requests are protected by a server-only password. Set it in the local
+environment and in the deployment environment before starting the app:
+
+```bash
+TOOLTRUTH_ACCESS_PASSWORD=use-a-long-unique-password
+```
+
+The app rejects inspection requests when this variable is missing or the submitted
+password does not match. Do not prefix it with `NEXT_PUBLIC_`; it must never be
+included in the browser bundle. After changing it on Vercel, redeploy the app so the
+new value is available to the server.
+
 Every Browserbase navigation, redirect, iframe, and HTTP(S) subresource request is
 validated before it continues. Local, private, reserved, metadata, and explicitly
 blocked ToolTruth destinations are rejected without requiring a static domain

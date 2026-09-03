@@ -1,3 +1,6 @@
+import { createHash, timingSafeEqual } from "node:crypto";
+
+import { serverEnv } from "@/data/env/server";
 import { inspectFormSchema } from "@/features/inspect/actions/schemas";
 import { createInspectionRun } from "@/features/inspect/server/inspection-run-store";
 import {
@@ -10,6 +13,20 @@ import {
 } from "@/features/inspect/server/validate-inspection-url";
 
 const MAX_REQUEST_BODY_LENGTH = 4096;
+
+const createPasswordDigest = (value: string) => {
+  return createHash("sha256").update(value, "utf8").digest();
+};
+
+const hasValidAccessPassword = (candidate: string) => {
+  const configuredPassword = serverEnv.TOOLTRUTH_ACCESS_PASSWORD;
+  if (!configuredPassword) return false;
+
+  return timingSafeEqual(
+    createPasswordDigest(candidate),
+    createPasswordDigest(configuredPassword),
+  );
+};
 
 const jsonResponse = (body: unknown, status: number) => {
   return Response.json(body, {
@@ -49,9 +66,35 @@ export const POST = async (request: Request) => {
 
   const parsedBody = inspectFormSchema.safeParse(body);
   if (!parsedBody.success) {
+    const firstIssue = parsedBody.error.issues[0];
+    const field = firstIssue?.path[0] === "password" ? "password" : "url";
+
     return jsonResponse(
-      { error: parsedBody.error.issues[0]?.message ?? "Enter a valid URL." },
+      {
+        error: firstIssue?.message ?? "Enter a valid URL and password.",
+        field,
+      },
       400,
+    );
+  }
+
+  if (!serverEnv.TOOLTRUTH_ACCESS_PASSWORD) {
+    return jsonResponse(
+      {
+        error: "Inspection access is not configured.",
+        field: "password",
+      },
+      503,
+    );
+  }
+
+  if (!hasValidAccessPassword(parsedBody.data.password)) {
+    return jsonResponse(
+      {
+        error: "The inspection password is incorrect.",
+        field: "password",
+      },
+      401,
     );
   }
 

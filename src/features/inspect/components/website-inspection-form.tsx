@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowRight, Globe2, Sparkles } from "lucide-react";
+import { ArrowRight, Globe2, KeyRound, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
@@ -25,10 +25,12 @@ export const WebsiteInspectionForm = () => {
     resolver: zodResolver(inspectFormSchema),
     defaultValues: {
       url: "",
+      password: "",
     },
   });
 
   const onSubmit = async (data: InspectFormValues) => {
+    let errorField: keyof InspectFormValues = "url";
     setLoading(true);
     try {
       const response = await fetch("/api/inspection", {
@@ -41,6 +43,15 @@ export const WebsiteInspectionForm = () => {
       const responseBody = await response.json();
 
       if (!response.ok) {
+        if (
+          typeof responseBody === "object" &&
+          responseBody !== null &&
+          "field" in responseBody &&
+          responseBody.field === "password"
+        ) {
+          errorField = "password";
+        }
+
         const errorMessage =
           typeof responseBody === "object" &&
           responseBody !== null &&
@@ -67,7 +78,11 @@ export const WebsiteInspectionForm = () => {
           ? error.message
           : "The inspection session could not be started.";
 
-      form.setError("url", { type: "server", message }, { shouldFocus: true });
+      form.setError(
+        errorField,
+        { type: "server", message },
+        { shouldFocus: true },
+      );
       showToast("Unable to start inspection", "error", {
         description: message,
       });
@@ -77,7 +92,7 @@ export const WebsiteInspectionForm = () => {
 
   const buttonDisabled = form.formState.isSubmitting || loading;
   const submitAgentMartDemo = () => {
-    form.clearErrors("url");
+    form.clearErrors();
     form.setValue("url", AGENTMART_DEMO_URL, {
       shouldDirty: true,
       shouldTouch: true,
@@ -117,6 +132,39 @@ export const WebsiteInspectionForm = () => {
                 autoComplete="url"
                 aria-invalid={fieldState.invalid}
                 placeholder="https://staging.example.com"
+                className="h-14 rounded-2xl border-border bg-background pl-12 pr-4 text-base shadow-xs placeholder:text-muted-foreground/80 focus-visible:bg-card md:text-base"
+              />
+            </div>
+
+            {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+          </Field>
+        )}
+      />
+
+      <Controller
+        name="password"
+        control={form.control}
+        render={({ field, fieldState }) => (
+          <Field className="gap-3" data-invalid={fieldState.invalid}>
+            <FieldLabel
+              htmlFor={field.name}
+              className="block text-base font-semibold"
+            >
+              Inspection password
+            </FieldLabel>
+
+            <div className="group relative">
+              <KeyRound
+                className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted-foreground transition-colors group-focus-within:text-primary"
+                aria-hidden="true"
+              />
+              <Input
+                {...field}
+                id={field.name}
+                type="password"
+                autoComplete="current-password"
+                aria-invalid={fieldState.invalid}
+                placeholder="Enter the password provided to you"
                 className="h-14 rounded-2xl border-border bg-background pl-12 pr-4 text-base shadow-xs placeholder:text-muted-foreground/80 focus-visible:bg-card md:text-base"
               />
             </div>
