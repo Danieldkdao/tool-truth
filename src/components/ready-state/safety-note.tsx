@@ -1,6 +1,6 @@
 import { ShieldCheck } from "lucide-react";
 
-export function SafetyNote() {
+export const SafetyNote = () => {
   return (
     <div className="flex gap-3 rounded-2xl border border-secondary/20 bg-secondary/7 px-4 py-3.5 text-base leading-7 text-foreground/80">
       <ShieldCheck
@@ -14,4 +14,4 @@ export function SafetyNote() {
       </p>
     </div>
   );
-}
+};

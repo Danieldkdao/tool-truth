@@ -20,6 +20,10 @@ const nextConfig: NextConfig = {
   },
   cacheComponents: true,
   reactCompiler: true,
+  serverExternalPackages: ["@browserbasehq/stagehand"],
+  logging: {
+    browserToTerminal: true,
+  },
 };
 
 export default nextConfig;

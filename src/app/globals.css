@@ -191,6 +191,21 @@
   order: 3;
 }
 
+.inspect-resizable-workspace .inspect-browser {
+  min-height: 0;
+}
+
+.inspect-resizable-workspace .inspect-evidence {
+  height: 100%;
+  min-height: 0;
+}
+
+.inspect-resizable-workspace .inspect-evidence-scroll {
+  min-height: 0;
+  max-height: none;
+  flex: 1;
+}
+
 @media (min-width: 1024px) {
   .inspect-shell {
     display: grid;

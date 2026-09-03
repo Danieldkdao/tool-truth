@@ -8,7 +8,7 @@ const supportedTools = new Set([
   "fetch_reviews",
 ]);
 
-export function WebMCPTools() {
+export const WebMCPTools = () => {
   useEffect(() => {
     if (!("modelContext" in document)) {
       console.warn("WebMCP is not available in this browser.");
@@ -42,9 +42,7 @@ export function WebMCPTools() {
             untrustedContentHint: false,
           },
 
-          execute: async (input, options) => {
-            const signal = options?.signal;
-
+          execute: async (input) => {
             const toolName = (input as { toolName?: unknown }).toolName;
 
             if (typeof toolName !== "string" || !supportedTools.has(toolName)) {
@@ -64,12 +62,16 @@ export function WebMCPTools() {
           signal: registration.signal,
         },
       )
-      .catch(console.error);
+      .catch((error: unknown) => {
+        if (!registration.signal.aborted) {
+          console.error(error);
+        }
+      });
 
     return () => {
-      registration.abort("WebMCPTools component unmounted.");
+      registration.abort();
     };
   }, []);
 
   return null;
-}
+};

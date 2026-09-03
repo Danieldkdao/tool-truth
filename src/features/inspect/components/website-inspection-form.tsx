@@ -2,18 +2,21 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowRight, Globe2, Sparkles } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { Controller, useForm } from "react-hook-form";
 
 import { Button } from "@/components/ui/button";
 import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
+  inspectionCreatedSchema,
   inspectFormSchema,
   type InspectFormValues,
 } from "@/features/inspect/actions/schemas";
 import { showToast } from "@/lib/utils";
 
-export function WebsiteInspectionForm() {
+export const WebsiteInspectionForm = () => {
+  const router = useRouter();
   const form = useForm<InspectFormValues>({
     resolver: zodResolver(inspectFormSchema),
     defaultValues: {
@@ -21,10 +24,48 @@ export function WebsiteInspectionForm() {
     },
   });
 
-  function onSubmit(data: InspectFormValues) {
-    console.log(data);
-    showToast("Website inspection submitted!", "success");
-  }
+  const onSubmit = async (data: InspectFormValues) => {
+    try {
+      const response = await fetch("/api/inspection", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(data),
+      });
+      const responseBody = await response.json();
+
+      if (!response.ok) {
+        const errorMessage =
+          typeof responseBody === "object" &&
+          responseBody !== null &&
+          "error" in responseBody &&
+          typeof responseBody.error === "string"
+            ? responseBody.error
+            : "The inspection session could not be started.";
+
+        throw new Error(errorMessage);
+      }
+
+      const result = inspectionCreatedSchema.parse(responseBody);
+
+      console.log({ runId: result.runId });
+      showToast("Inspection session started", "success", {
+        description: `Run ID: ${result.runId}`,
+      });
+      router.push(`/inspect/${encodeURIComponent(result.runId)}`);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "The inspection session could not be started.";
+
+      form.setError("url", { type: "server", message }, { shouldFocus: true });
+      showToast("Unable to start inspection", "error", {
+        description: message,
+      });
+    }
+  };
 
   return (
     <form
@@ -70,9 +111,12 @@ export function WebsiteInspectionForm() {
         <Button
           type="submit"
           size="lg"
+          disabled={form.formState.isSubmitting}
           className="h-13 rounded-2xl px-6 text-base font-semibold shadow-sm shadow-primary/15"
         >
-          Inspect website
+          {form.formState.isSubmitting
+            ? "Starting inspection…"
+            : "Inspect website"}
           <ArrowRight className="size-5 transition-transform group-hover/button:translate-x-0.5" />
         </Button>
 
@@ -88,4 +132,4 @@ export function WebsiteInspectionForm() {
       </div>
     </form>
   );
-}
+};
