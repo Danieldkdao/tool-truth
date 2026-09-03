@@ -35,11 +35,11 @@ import type {
   InspectionBrowserSession,
   InspectionBrowserSessionContext,
 } from "@/features/inspect/server/inspection-browser-session";
+import { readStableWebMcpTools } from "@/features/inspect/server/discover-webmcp-tools";
 import { getInspectionBrowserLabel } from "@/features/inspect/server/stagehand-browser";
 import { validateInspectionUrl } from "@/features/inspect/server/validate-inspection-url";
 
 const NAVIGATION_TIMEOUT_MS = 20_000;
-const TOOL_DISCOVERY_TIMEOUT_MS = 4_000;
 const TOOL_INVOCATION_TIMEOUT_MS = 20_000;
 const MAX_LOG_ENTRIES = 250;
 const MAX_NETWORK_ENTRIES = 100;
@@ -709,9 +709,7 @@ export const runToolVerification = async ({
       const discoverTools = async () => {
         const discoveryStartedAt = Date.now();
         try {
-          return await page.listWebMCPTools({
-            timeoutMs: TOOL_DISCOVERY_TIMEOUT_MS,
-          });
+          return await readStableWebMcpTools(page);
         } finally {
           discoveryDurationMs += Date.now() - discoveryStartedAt;
         }

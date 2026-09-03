@@ -18,20 +18,19 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 ## Inspection browser
 
-Tool Truth uses the local isolated browser by default. Browserbase is reserved for
-trusted smoke-test targets and requires every permitted network domain to be
-configured explicitly:
+Tool Truth uses the local isolated browser by default. Browserbase can inspect any
+publicly resolvable HTTP or HTTPS application URL:
 
 ```bash
 STAGEHAND_ENV=browserbase
 BROWSERBASE_API_KEY=...
 BROWSERBASE_PROJECT_ID=...
-BROWSERBASE_ALLOWED_DOMAINS=demo.example.com,static.example.com
 ```
 
-The submitted target hostname must appear in `BROWSERBASE_ALLOWED_DOMAINS`.
-Browserbase blocks HTTP and HTTPS requests to domains outside that list, so include
-any trusted asset or API domains that the smoke-test application requires.
+Every Browserbase navigation, redirect, iframe, and HTTP(S) subresource request is
+validated before it continues. Local, private, reserved, metadata, and explicitly
+blocked ToolTruth destinations are rejected without requiring a static domain
+allowlist.
 
 ToolTruth can also reject its own public hostnames so it cannot recursively inspect
 its workbench tools. Configure a comma-separated list of hostnames without schemes,

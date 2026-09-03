@@ -51,6 +51,11 @@ export type ValidatedInspectionTarget = {
   resolvedAddresses: string[];
 };
 
+export type ParsedInspectionUrl = {
+  url: string;
+  hostname: string;
+};
+
 const ipv4ToNumber = (address: string) => {
   return address.split(".").reduce((value, part) => {
     return value * 256 + Number(part);
@@ -216,9 +221,7 @@ const assertAllowedHostname = (hostname: string) => {
   }
 };
 
-export const validateInspectionUrl = async (
-  input: string,
-): Promise<ValidatedInspectionTarget> => {
+export const parseInspectionUrl = (input: string): ParsedInspectionUrl => {
   if (input.length > 2048) {
     throw new UnsafeInspectionUrlError("The URL is too long.");
   }
@@ -243,12 +246,27 @@ export const validateInspectionUrl = async (
   const hostname = normalizeHostname(url.hostname);
   assertAllowedHostname(hostname);
 
+  url.hash = "";
+
+  return {
+    url: url.toString(),
+    hostname,
+  };
+};
+
+export const validateInspectionHostname = async (hostname: string) => {
+  const normalizedHostname = normalizeHostname(hostname);
+  assertAllowedHostname(normalizedHostname);
+
   let resolvedAddresses: string[];
-  if (isIP(hostname) !== 0) {
-    resolvedAddresses = [hostname];
+  if (isIP(normalizedHostname) !== 0) {
+    resolvedAddresses = [normalizedHostname];
   } else {
     try {
-      const results = await lookup(hostname, { all: true, verbatim: true });
+      const results = await lookup(normalizedHostname, {
+        all: true,
+        verbatim: true,
+      });
       resolvedAddresses = [...new Set(results.map(({ address }) => address))];
     } catch {
       throw new UnsafeInspectionUrlError(
@@ -266,11 +284,17 @@ export const validateInspectionUrl = async (
     );
   }
 
-  url.hash = "";
+  return resolvedAddresses;
+};
+
+export const validateInspectionUrl = async (
+  input: string,
+): Promise<ValidatedInspectionTarget> => {
+  const parsed = parseInspectionUrl(input);
+  const resolvedAddresses = await validateInspectionHostname(parsed.hostname);
 
   return {
-    url: url.toString(),
-    hostname,
+    ...parsed,
     resolvedAddresses,
   };
 };

@@ -4,6 +4,10 @@ import { Stagehand } from "@browserbasehq/stagehand";
 
 import { serverEnv } from "@/data/env/server";
 import {
+  createBrowserDestinationGuard,
+  type BrowserDestinationGuard,
+} from "@/features/inspect/server/browser-destination-guard";
+import {
   createSharedStagehandOptions,
   type BrowserbaseSessionMetadata,
   INSPECTION_VIEWPORT,
@@ -238,7 +242,6 @@ const requestBrowserbaseLiveViewUrl = async (
 
 export const createBrowserbaseInspectionBrowser = (
   reportLog: StagehandLogReporter,
-  allowedDomains: string[],
 ): InspectionBrowserHandle => {
   const apiKey = serverEnv.BROWSERBASE_API_KEY;
   const projectId = serverEnv.BROWSERBASE_PROJECT_ID;
@@ -279,6 +282,7 @@ export const createBrowserbaseInspectionBrowser = (
       },
     },
   });
+  let destinationGuard: BrowserDestinationGuard | undefined;
 
   return {
     browser,
@@ -302,9 +306,16 @@ export const createBrowserbaseInspectionBrowser = (
         );
         reportStartup({
           value: 22,
-          message: "Installing the Browserbase destination guard",
+          message: "Installing the dynamic destination guard",
         });
-        await browser.context.setDomainPolicy({ allowedDomains });
+        const page = browser.context.pages()[0];
+        if (!page) {
+          throw new Error("Browserbase did not create an initial page.");
+        }
+        destinationGuard = await createBrowserDestinationGuard(
+          page,
+          browser.context,
+        );
         reportStartup({ value: 24, message: "Browserbase browser ready" });
       } catch (error) {
         void initialization
@@ -314,7 +325,13 @@ export const createBrowserbaseInspectionBrowser = (
         throw toBrowserbaseStartupError(error);
       }
     },
-    closeEnvironment: async () => undefined,
+    refreshDestinationGuard: async () => {
+      await destinationGuard?.refresh();
+    },
+    closeEnvironment: async () => {
+      await destinationGuard?.dispose();
+      destinationGuard = undefined;
+    },
     requestBrowserbaseLiveViewUrl: (sessionId) =>
       requestBrowserbaseLiveViewUrl(sessionId, apiKey),
     requestBrowserbaseSessionMetadata: (sessionId) =>

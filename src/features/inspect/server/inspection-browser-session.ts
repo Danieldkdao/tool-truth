@@ -104,7 +104,6 @@ const MAX_BUFFERED_STARTUP_LOGS = 100;
 const BROWSER_CLOSE_TIMEOUT_MS = 10_000;
 
 export const openInspectionBrowserSession = async (
-  targetHostname: string,
   reportStartup: InspectionBrowserStartupReporter,
   reportBrowserbaseLifecycle?: BrowserbaseSessionLifecycleReporter,
 ) => {
@@ -116,13 +115,13 @@ export const openInspectionBrowserSession = async (
     provider,
     browserbaseSessionTimeoutMs,
     initialize,
+    refreshDestinationGuard,
     closeEnvironment,
     requestBrowserbaseLiveViewUrl,
     requestBrowserbaseSessionMetadata,
     requestBrowserbaseReplayAvailability,
     releaseBrowserbaseSession,
   } = await createInspectionBrowser(
-    targetHostname,
     (line) => {
       if (logReporters.size === 0) {
         if (bufferedLogs.length >= MAX_BUFFERED_STARTUP_LOGS) {
@@ -330,8 +329,15 @@ export const openInspectionBrowserSession = async (
         throw new InspectionBrowserSessionUnavailableError();
       }
 
-      await evidenceObserver.refresh();
-      return await operation({ browser, page, evidenceObserver });
+      await Promise.all([
+        evidenceObserver.refresh(),
+        refreshDestinationGuard?.(),
+      ]);
+      try {
+        return await operation({ browser, page, evidenceObserver });
+      } finally {
+        await refreshDestinationGuard?.();
+      }
     } finally {
       releaseOperation();
     }

@@ -199,6 +199,14 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 };
 
+const toolAcceptsNoInput = (tool: DetectedTool) => {
+  const schema = parseInputSchema(tool.inputSchema);
+  if (!schema) return false;
+
+  const properties = isRecord(schema.properties) ? schema.properties : {};
+  return Object.keys(properties).length === 0;
+};
+
 const futureIsoDate = (daysFromNow: number) => {
   const date = new Date();
   date.setUTCDate(date.getUTCDate() + daysFromNow);
@@ -392,7 +400,8 @@ const createFallbackFinding = (
     declared: input.tool.description || "No tool description was provided.",
     observed:
       input.invocationStatus !== "Completed"
-        ? input.invocationError || `Invocation ended with ${input.invocationStatus}.`
+        ? input.invocationError ||
+          `Invocation ended with ${input.invocationStatus}, but the browser API did not provide an error message.`
         : verdict === "error" && input.toolOutput !== undefined
           ? formatInputValue(input.toolOutput)
         : mutationSummary.length > 0
@@ -520,13 +529,19 @@ export const analyzeToolVerification = async (
 
   const verdict = hardVerdict;
   const fallbackFinding = createFallbackFinding(input, verdict);
+  const missingNoInputInvocationError =
+    verdict === "error" &&
+    toolAcceptsNoInput(input.tool) &&
+    !input.invocationError;
 
   let finding = fallbackFinding;
   let suggestedRepair =
     verdict === "failed"
       ? "Align the implementation with the declared read-only behavior, or update the contract and require confirmation before consequential changes."
       : verdict === "error"
-        ? "Inspect the invocation error and retry with valid synthetic input."
+        ? missingNoInputInvocationError
+          ? "This tool accepts no input, so different synthetic input will not help. Inspect its runtime preconditions and make the tool self-contained or declare the required setup."
+          : "Inspect the invocation error and retry with valid synthetic input."
         : "No contract repair is recommended from this run; keep the evidence as a regression fixture.";
 
   const model = getToolTruthAnalysisModel();
@@ -582,9 +597,13 @@ export const analyzeToolVerification = async (
       ...fallbackFinding,
       title: generated.title,
       declared: generated.declared,
-      observed: generated.observed,
+      observed: missingNoInputInvocationError
+        ? fallbackFinding.observed
+        : generated.observed,
     };
-    suggestedRepair = generated.suggestedRepair;
+    suggestedRepair = missingNoInputInvocationError
+      ? suggestedRepair
+      : generated.suggestedRepair;
     reportActivity("AI evidence summary completed");
   } catch (error) {
     throwIfAborted(signal);

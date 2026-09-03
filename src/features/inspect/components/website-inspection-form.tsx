@@ -3,6 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowRight, Globe2, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,8 @@ import {
   type InspectFormValues,
 } from "@/features/inspect/actions/schemas";
 import { showToast } from "@/lib/utils";
-import { useState } from "react";
+
+const AGENTMART_DEMO_URL = "https://tooltruth-agentmart.vercel.app";
 
 export const WebsiteInspectionForm = () => {
   const [loading, setLoading] = useState(false);
@@ -74,6 +76,15 @@ export const WebsiteInspectionForm = () => {
   };
 
   const buttonDisabled = form.formState.isSubmitting || loading;
+  const submitAgentMartDemo = () => {
+    form.clearErrors("url");
+    form.setValue("url", AGENTMART_DEMO_URL, {
+      shouldDirty: true,
+      shouldTouch: true,
+      shouldValidate: true,
+    });
+    void form.handleSubmit(onSubmit)();
+  };
 
   return (
     <form
@@ -130,6 +141,8 @@ export const WebsiteInspectionForm = () => {
           type="button"
           variant="outline"
           size="lg"
+          disabled={buttonDisabled}
+          onClick={submitAgentMartDemo}
           className="h-13 rounded-2xl border-border bg-card px-5 text-base font-semibold shadow-xs"
         >
           <Sparkles className="size-5 text-secondary" />
