@@ -64,22 +64,30 @@ export const GET = async (
         },
       });
 
-      const browserSession = getOrCreateInspectionBrowserSession(
-        run,
-        () =>
-          openInspectionBrowserSession((progress) => {
-            send({ kind: "section.progress", section: "tools", progress });
-          }),
-      );
-      void getOrCreateToolDiscovery(run, async () =>
-        discoverWebMcpTools(
-          run.targetUrl,
-          (progress) => {
-            send({ kind: "section.progress", section: "tools", progress });
-          },
-          await browserSession,
-        ),
-      )
+      void getOrCreateToolDiscovery(run, async () => {
+        const browserSession = getOrCreateInspectionBrowserSession(
+          run,
+          () =>
+            openInspectionBrowserSession(
+              run.targetHostname,
+              (progress) => {
+                send({ kind: "section.progress", section: "tools", progress });
+              },
+            ),
+        );
+
+        try {
+          return await discoverWebMcpTools(
+            run.targetUrl,
+            (progress) => {
+              send({ kind: "section.progress", section: "tools", progress });
+            },
+            await browserSession,
+          );
+        } finally {
+          await disposeInspectionBrowserSession(run, browserSession);
+        }
+      })
         .then(async (tools) => {
           for (const tool of tools) {
             send({ kind: "tool.discovered", data: tool });
@@ -89,7 +97,6 @@ export const GET = async (
           send({ kind: "tools.ready", data: tools });
         })
         .catch((error: unknown) => {
-          void disposeInspectionBrowserSession(run);
           console.error("WebMCP tool discovery failed", {
             runId,
             targetHostname: run.targetHostname,

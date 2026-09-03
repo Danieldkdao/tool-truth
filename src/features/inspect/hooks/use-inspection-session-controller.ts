@@ -45,8 +45,11 @@ export type InspectionSessionSnapshot = {
 export type InspectionSessionController = {
   snapshot: InspectionSessionSnapshot;
   focusEvidence: (focus: InspectionEvidenceFocus) => boolean;
-  startVerification: (toolId?: string) => Promise<boolean>;
-  runAllVerifications: () => Promise<boolean>;
+  startVerification: (
+    toolId?: string,
+    signal?: AbortSignal,
+  ) => Promise<boolean>;
+  runAllVerifications: (signal?: AbortSignal) => Promise<boolean>;
 };
 
 export const useInspectionSessionController = (
@@ -100,25 +103,23 @@ export const useInspectionSessionController = (
   );
 
   const startVerification = useCallback(
-    async (toolId?: string) => {
+    async (toolId?: string, signal?: AbortSignal) => {
       const targetToolId = toolId ?? resolvedToolId;
       if (!targetToolId || isBusy) return false;
       if (!focusEvidence({ toolId: targetToolId, tab: "Timeline" })) {
         return false;
       }
 
-      await startToolVerification(targetToolId);
-      return true;
+      return startToolVerification(targetToolId, signal);
     },
     [focusEvidence, isBusy, resolvedToolId, startToolVerification],
   );
 
-  const runAllVerifications = useCallback(async () => {
+  const runAllVerifications = useCallback(async (signal?: AbortSignal) => {
     const toolIds = run.tools?.map((tool) => tool.id) ?? [];
     if (toolIds.length === 0 || isBusy) return false;
 
-    await runToolVerifications(toolIds);
-    return true;
+    return runToolVerifications(toolIds, signal);
   }, [isBusy, run.tools, runToolVerifications]);
 
   const snapshot = useMemo<InspectionSessionSnapshot>(

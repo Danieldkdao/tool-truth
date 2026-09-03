@@ -17,6 +17,33 @@ export {
 
 const ADAPTER_LOAD_TIMEOUT_MS = 15_000;
 
+const normalizeHostname = (hostname: string) => {
+  return hostname.trim().replace(/\.$/, "").toLowerCase();
+};
+
+const getBrowserbaseAllowedDomains = (targetHostname: string) => {
+  const allowedDomains = [
+    ...new Set(
+      serverEnv.BROWSERBASE_ALLOWED_DOMAINS?.split(",")
+        .map(normalizeHostname)
+        .filter(Boolean) ?? [],
+    ),
+  ];
+  const normalizedTargetHostname = normalizeHostname(targetHostname);
+
+  if (
+    allowedDomains.length === 0 ||
+    !allowedDomains.includes(normalizedTargetHostname)
+  ) {
+    throw new InspectionBrowserStartupError(
+      `Browserbase rejected unapproved target ${normalizedTargetHostname}.`,
+      "Browserbase inspections are limited to server-approved smoke-test domains. Add this host to BROWSERBASE_ALLOWED_DOMAINS or use the local browser.",
+    );
+  }
+
+  return allowedDomains;
+};
+
 const loadAdapter = async <T>(adapter: Promise<T>, name: string) => {
   let timeout: NodeJS.Timeout | undefined;
   const deadline = new Promise<never>((_resolve, reject) => {
@@ -39,6 +66,7 @@ const loadAdapter = async <T>(adapter: Promise<T>, name: string) => {
 };
 
 export const createInspectionBrowser = async (
+  targetHostname: string,
   reportLog: StagehandLogReporter,
   reportStartup: InspectionBrowserStartupReporter,
 ): Promise<InspectionBrowserHandle> => {
@@ -52,19 +80,16 @@ export const createInspectionBrowser = async (
   }
 
   reportStartup({ value: 16, message: "Loading the Browserbase adapter" });
+  const allowedDomains = getBrowserbaseAllowedDomains(targetHostname);
   const { createBrowserbaseInspectionBrowser } = await loadAdapter(
     import("@/features/inspect/server/stagehand-browserbase-browser"),
     "The Browserbase adapter",
   );
-  return createBrowserbaseInspectionBrowser(reportLog);
+  return createBrowserbaseInspectionBrowser(reportLog, allowedDomains);
 };
 
 export const getInspectionBrowserLabel = () => {
   return serverEnv.STAGEHAND_ENV === "local"
     ? "Local isolated browser"
     : "Browserbase isolated browser";
-};
-
-export const shouldCloseInspectionBrowserAfterProbe = () => {
-  return serverEnv.STAGEHAND_ENV === "browserbase";
 };

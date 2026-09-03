@@ -16,6 +16,28 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Inspection browser
+
+Tool Truth uses the local isolated browser by default. Browserbase is reserved for
+trusted smoke-test targets and requires every permitted network domain to be
+configured explicitly:
+
+```bash
+STAGEHAND_ENV=browserbase
+BROWSERBASE_API_KEY=...
+BROWSERBASE_PROJECT_ID=...
+BROWSERBASE_ALLOWED_DOMAINS=demo.example.com,static.example.com
+```
+
+The submitted target hostname must appear in `BROWSERBASE_ALLOWED_DOMAINS`.
+Browserbase blocks HTTP and HTTPS requests to domains outside that list, so include
+any trusted asset or API domains that the smoke-test application requires.
+
+Browserbase discovery and verification sessions are disposable. Discovery closes
+its session as soon as the tool contracts are captured, and verification closes
+its session as soon as the runtime evidence is captured, before contract analysis.
+Hosted sessions also have a five-minute maximum as a cleanup safety limit.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

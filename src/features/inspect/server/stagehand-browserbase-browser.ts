@@ -84,6 +84,7 @@ const toBrowserbaseStartupError = (error: unknown) => {
 
 export const createBrowserbaseInspectionBrowser = (
   reportLog: StagehandLogReporter,
+  allowedDomains: string[],
 ): InspectionBrowserHandle => {
   if (!serverEnv.BROWSERBASE_API_KEY) {
     throw new InspectionBrowserStartupError(
@@ -140,6 +141,11 @@ export const createBrowserbaseInspectionBrowser = (
             "Browserbase did not finish creating and connecting to the browser within 45 seconds.",
           ),
         );
+        reportStartup({
+          value: 22,
+          message: "Installing the Browserbase destination guard",
+        });
+        await browser.context.setDomainPolicy({ allowedDomains });
         reportStartup({ value: 24, message: "Browserbase browser ready" });
       } catch (error) {
         void initialization

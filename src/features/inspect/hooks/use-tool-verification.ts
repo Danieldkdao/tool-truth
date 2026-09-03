@@ -13,6 +13,7 @@ import type {
 } from "@/features/inspect/components/inspection-stream";
 
 export type ToolVerificationRecord = {
+  attempt: number;
   status: ToolVerificationStatus;
   error: string | null;
   evidenceData: ExecutionEvidenceData | null;
@@ -27,13 +28,19 @@ type VerificationState = {
 };
 
 type VerificationAction =
-  | { type: "starting"; toolId: string }
-  | { type: "event"; toolId: string; event: VerificationStreamEvent }
-  | { type: "failed"; toolId: string; message: string }
+  | { type: "starting"; toolId: string; attempt: number }
+  | {
+      type: "event";
+      toolId: string;
+      attempt: number;
+      event: VerificationStreamEvent;
+    }
+  | { type: "failed"; toolId: string; attempt: number; message: string }
   | { type: "batch.started" }
   | { type: "batch.completed" };
 
-const createInitialRecord = (): ToolVerificationRecord => ({
+const createInitialRecord = (attempt = 0): ToolVerificationRecord => ({
+  attempt,
   status: "idle",
   error: null,
   evidenceData: null,
@@ -88,13 +95,18 @@ const reduceVerification = (
 
   if (action.type === "starting") {
     return updateRecord(state, action.toolId, () => ({
-      ...createInitialRecord(),
+      ...createInitialRecord(action.attempt),
       status: "running",
       evidenceProgress: {
         value: 5,
         message: "Creating a disposable verification probe",
       },
     }));
+  }
+
+  const activeRecord = state.records[action.toolId];
+  if (!activeRecord || activeRecord.attempt !== action.attempt) {
+    return state;
   }
 
   if (action.type === "failed") {
@@ -150,30 +162,59 @@ const readErrorMessage = async (response: Response) => {
   }
 };
 
+const createAbortError = () => {
+  return new DOMException("The verification was cancelled.", "AbortError");
+};
+
+const isAbortError = (error: unknown) => {
+  return error instanceof DOMException && error.name === "AbortError";
+};
+
+const linkAbortSignal = (
+  controller: AbortController,
+  signal?: AbortSignal,
+) => {
+  if (!signal) return () => undefined;
+
+  const abort = () => controller.abort();
+  signal.addEventListener("abort", abort, { once: true });
+  return () => signal.removeEventListener("abort", abort);
+};
+
 export const useToolVerification = (runId: string) => {
   const [state, dispatch] = useReducer(reduceVerification, initialState);
   const sourceRef = useRef<EventSource | null>(null);
   const operationActiveRef = useRef(false);
+  const operationControllerRef = useRef<AbortController | null>(null);
+  const nextAttemptRef = useRef(0);
 
   const closeSource = useCallback(() => {
     sourceRef.current?.close();
     sourceRef.current = null;
   }, []);
 
-  useEffect(() => closeSource, [closeSource]);
+  useEffect(
+    () => () => {
+      operationControllerRef.current?.abort();
+      closeSource();
+    },
+    [closeSource],
+  );
 
   const runOneVerification = useCallback(
-    async (toolId: string) => {
+    async (toolId: string, attempt: number, signal: AbortSignal) => {
       closeSource();
-      dispatch({ type: "starting", toolId });
+      dispatch({ type: "starting", toolId, attempt });
 
       try {
+        if (signal.aborted) throw createAbortError();
         const response = await fetch(
           `/api/inspection/${encodeURIComponent(runId)}/probe`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ toolId }),
+            signal,
           },
         );
 
@@ -186,24 +227,33 @@ export const useToolVerification = (runId: string) => {
           throw new Error("The verification stream URL was not returned.");
         }
 
-        await new Promise<void>((resolve) => {
+        await new Promise<void>((resolve, reject) => {
           const source = new EventSource(body.eventsUrl as string);
           sourceRef.current = source;
           let settled = false;
+          let handleAbort: () => void = () => undefined;
 
-          const finish = () => {
+          const finish = (error?: Error) => {
             if (settled) {
               return;
             }
 
             settled = true;
+            signal.removeEventListener("abort", handleAbort);
             if (sourceRef.current === source) {
               closeSource();
             } else {
               source.close();
             }
-            resolve();
+            if (error) {
+              reject(error);
+            } else {
+              resolve();
+            }
           };
+
+          handleAbort = () => finish(createAbortError());
+          signal.addEventListener("abort", handleAbort, { once: true });
 
           const handleVerificationEvent = (message: MessageEvent<string>) => {
             let event: VerificationStreamEvent;
@@ -213,7 +263,7 @@ export const useToolVerification = (runId: string) => {
               return;
             }
 
-            dispatch({ type: "event", toolId, event });
+            dispatch({ type: "event", toolId, attempt, event });
             if (
               event.kind === "probe.completed" ||
               event.kind === "probe.failed"
@@ -228,6 +278,7 @@ export const useToolVerification = (runId: string) => {
               dispatch({
                 type: "failed",
                 toolId,
+                attempt,
                 message:
                   "The verification stream disconnected before completion.",
               });
@@ -239,51 +290,87 @@ export const useToolVerification = (runId: string) => {
         dispatch({
           type: "failed",
           toolId,
+          attempt,
           message:
-            error instanceof Error
+            isAbortError(error)
+              ? "The verification was cancelled."
+              : error instanceof Error
               ? error.message
               : "The verification probe could not be started.",
         });
         closeSource();
+        if (isAbortError(error)) throw error;
       }
     },
     [closeSource, runId],
   );
 
-  const startVerification = useCallback(
-    async (toolId: string) => {
-      if (operationActiveRef.current) {
-        return;
-      }
+  const runExclusiveOperation = useCallback(
+    async (
+      operation: (signal: AbortSignal) => Promise<void>,
+      signal?: AbortSignal,
+    ) => {
+      if (operationActiveRef.current) return false;
+      if (signal?.aborted) throw createAbortError();
 
       operationActiveRef.current = true;
+      const controller = new AbortController();
+      operationControllerRef.current = controller;
+      const unlinkSignal = linkAbortSignal(controller, signal);
+
       try {
-        await runOneVerification(toolId);
+        await operation(controller.signal);
+        return true;
+      } catch (error) {
+        if (isAbortError(error) && !signal?.aborted) return true;
+        throw error;
       } finally {
+        unlinkSignal();
+        if (operationControllerRef.current === controller) {
+          operationControllerRef.current = null;
+        }
         operationActiveRef.current = false;
       }
     },
-    [runOneVerification],
+    [],
+  );
+
+  const startVerification = useCallback(
+    (toolId: string, signal?: AbortSignal) => {
+      return runExclusiveOperation(async (operationSignal) => {
+        nextAttemptRef.current += 1;
+        await runOneVerification(
+          toolId,
+          nextAttemptRef.current,
+          operationSignal,
+        );
+      }, signal);
+    },
+    [runExclusiveOperation, runOneVerification],
   );
 
   const runAllVerifications = useCallback(
-    async (toolIds: string[]) => {
-      if (operationActiveRef.current || toolIds.length === 0) {
-        return;
-      }
+    (toolIds: string[], signal?: AbortSignal) => {
+      if (toolIds.length === 0) return Promise.resolve(false);
 
-      operationActiveRef.current = true;
-      dispatch({ type: "batch.started" });
-      try {
-        for (const toolId of toolIds) {
-          await runOneVerification(toolId);
+      return runExclusiveOperation(async (operationSignal) => {
+        dispatch({ type: "batch.started" });
+        try {
+          for (const toolId of toolIds) {
+            if (operationSignal.aborted) throw createAbortError();
+            nextAttemptRef.current += 1;
+            await runOneVerification(
+              toolId,
+              nextAttemptRef.current,
+              operationSignal,
+            );
+          }
+        } finally {
+          dispatch({ type: "batch.completed" });
         }
-      } finally {
-        operationActiveRef.current = false;
-        dispatch({ type: "batch.completed" });
-      }
+      }, signal);
     },
-    [runOneVerification],
+    [runExclusiveOperation, runOneVerification],
   );
 
   const isAnyRunning = Object.values(state.records).some(

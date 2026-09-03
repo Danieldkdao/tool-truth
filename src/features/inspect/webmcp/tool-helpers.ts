@@ -157,7 +157,12 @@ export const findToolOrThrow = (
 export const isVerificationTerminal = (
   snapshot: InspectionSessionSnapshot,
   toolId: string,
+  previousAttempt = -1,
 ) => {
-  const status = snapshot.verificationRecords[toolId]?.status;
-  return status ? TERMINAL_VERIFICATION_STATUSES.has(status) : false;
+  const record = snapshot.verificationRecords[toolId];
+  return Boolean(
+    record &&
+      record.attempt > previousAttempt &&
+      TERMINAL_VERIFICATION_STATUSES.has(record.status),
+  );
 };

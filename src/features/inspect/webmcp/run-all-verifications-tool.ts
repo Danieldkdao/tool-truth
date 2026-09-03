@@ -1,5 +1,4 @@
 import {
-  awaitWithSignal,
   isVerificationTerminal,
   throwIfAborted,
   waitForControllerSnapshot,
@@ -27,6 +26,12 @@ export const createRunAllVerificationsTool = (
     throwIfAborted(signal);
     const controller = getController();
     const toolIds = controller.snapshot.tools?.map((tool) => tool.id) ?? [];
+    const previousAttempts = Object.fromEntries(
+      toolIds.map((toolId) => [
+        toolId,
+        controller.snapshot.verificationRecords[toolId]?.attempt ?? 0,
+      ]),
+    );
 
     if (toolIds.length === 0) {
       throw new Error("This inspection has no discovered tools to verify.");
@@ -38,10 +43,7 @@ export const createRunAllVerificationsTool = (
       );
     }
 
-    const started = await awaitWithSignal(
-      controller.runAllVerifications(),
-      signal,
-    );
+    const started = await controller.runAllVerifications(signal);
 
     if (!started) {
       throw new Error("The batch verification could not be started.");
@@ -52,7 +54,11 @@ export const createRunAllVerificationsTool = (
       (candidate) =>
         !candidate.isBusy &&
         toolIds.every((toolId) =>
-          isVerificationTerminal(candidate, toolId),
+          isVerificationTerminal(
+            candidate,
+            toolId,
+            previousAttempts[toolId] ?? 0,
+          ),
         ),
       signal,
     );

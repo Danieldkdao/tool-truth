@@ -1,15 +1,19 @@
 import type { VerificationStreamEvent } from "@/features/inspect/components/inspection-stream";
 import {
-  disposeInspectionBrowserSession,
-  getInspectionBrowserSession,
+  InspectionBrowserSessionUnavailableError,
+  openInspectionBrowserSession,
+} from "@/features/inspect/server/inspection-browser-session";
+import {
+  cancelInspectionProbe,
+  disposeInspectionProbeBrowserSession,
   getInspectionProbe,
   getInspectionRun,
+  getOrCreateInspectionProbeBrowserSession,
   getOrStartInspectionProbe,
   publishInspectionProbeEvent,
   subscribeToInspectionProbe,
 } from "@/features/inspect/server/inspection-run-store";
 import { runToolVerification } from "@/features/inspect/server/run-tool-verification";
-import { shouldCloseInspectionBrowserAfterProbe } from "@/features/inspect/server/stagehand-browser";
 
 type ProbeParams = {
   params: Promise<{ runId: string; probeId: string }>;
@@ -29,6 +33,10 @@ const isTerminalEvent = (event: VerificationStreamEvent) => {
   return event.kind === "probe.completed" || event.kind === "probe.failed";
 };
 
+const isAbortError = (error: unknown) => {
+  return error instanceof DOMException && error.name === "AbortError";
+};
+
 export const GET = async (request: Request, { params }: ProbeParams) => {
   const { runId, probeId } = await params;
   const run = getInspectionRun(runId);
@@ -46,17 +54,6 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
   if (!selectedTool) {
     return Response.json(
       { error: "The selected tool is no longer available for this run." },
-      { status: 409, headers: { "Cache-Control": "no-store" } },
-    );
-  }
-
-  const browserSession = getInspectionBrowserSession(run);
-  if (!browserSession) {
-    return Response.json(
-      {
-        error:
-          "The browser session for this inspection is no longer available. Start a new inspection.",
-      },
       { status: 409, headers: { "Cache-Control": "no-store" } },
     );
   }
@@ -97,46 +94,90 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
 
       unsubscribe = subscribeToInspectionProbe(probe, send);
 
-      void getOrStartInspectionProbe(probe, async () => {
+      void getOrStartInspectionProbe(probe, async (signal) => {
+        const runWithDisposableBrowser = async () => {
+          const browserSession = getOrCreateInspectionProbeBrowserSession(
+            probe,
+            () =>
+              openInspectionBrowserSession(
+                run.targetHostname,
+                (progress) =>
+                  publishInspectionProbeEvent(probe, {
+                    kind: "section.progress",
+                    section: "evidence",
+                    progress: {
+                      ...progress,
+                      value: Math.max(
+                        5,
+                        Math.min(9, Math.round(progress.value / 3)),
+                      ),
+                    },
+                  }),
+              ),
+          );
+
+          try {
+            await runToolVerification({
+              runId: run.id,
+              probeId: probe.id,
+              targetUrl: run.targetUrl,
+              selectedTool,
+              browserSession: await browserSession,
+              releaseBrowser: () =>
+                disposeInspectionProbeBrowserSession(probe, browserSession),
+              signal,
+              report: (event) => publishInspectionProbeEvent(probe, event),
+            });
+          } finally {
+            await disposeInspectionProbeBrowserSession(probe, browserSession);
+          }
+        };
+
         try {
-          await runToolVerification({
-            runId: run.id,
-            probeId: probe.id,
-            targetUrl: run.targetUrl,
-            selectedTool,
-            browserSession: await browserSession,
-            report: (event) => publishInspectionProbeEvent(probe, event),
-          });
+          try {
+            await runWithDisposableBrowser();
+          } catch (error) {
+            if (
+              !(error instanceof InspectionBrowserSessionUnavailableError) ||
+              signal.aborted
+            ) {
+              throw error;
+            }
+
+            await runWithDisposableBrowser();
+          }
         } catch (error) {
-          console.error("ToolTruth verification failed", {
-            runId: run.id,
-            probeId: probe.id,
-            toolId: probe.toolId,
-            error,
-          });
+          if (!isAbortError(error)) {
+            console.error("ToolTruth verification failed", {
+              runId: run.id,
+              probeId: probe.id,
+              toolId: probe.toolId,
+              error,
+            });
+          }
           publishInspectionProbeEvent(probe, {
             kind: "probe.failed",
             toolId: probe.toolId,
             message:
-              error instanceof Error
+              isAbortError(error)
+                ? "The verification was cancelled."
+                : error instanceof Error
                 ? error.message
                 : "The verification could not be completed.",
           });
-        } finally {
-          if (shouldCloseInspectionBrowserAfterProbe()) {
-            await disposeInspectionBrowserSession(run);
-          }
         }
       });
 
       request.signal.addEventListener("abort", () => {
         closed = true;
         unsubscribe();
+        cancelInspectionProbe(probe);
       });
     },
     cancel: () => {
       closed = true;
       unsubscribe();
+      cancelInspectionProbe(probe);
     },
   });
 

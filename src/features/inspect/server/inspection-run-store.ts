@@ -21,6 +21,8 @@ export type InspectionProbe = {
   events: VerificationStreamEvent[];
   subscribers: Set<ProbeSubscriber>;
   execution?: Promise<void>;
+  abortController?: AbortController;
+  browserSession?: Promise<InspectionBrowserSession>;
 };
 
 export type InspectionRun = {
@@ -46,7 +48,12 @@ const inspectionRuns =
 
 globalForInspectionRuns.toolTruthInspectionRuns = inspectionRuns;
 
-const closeRunBrowserSession = async (run: InspectionRun) => {
+const closeRunBrowserSession = async (
+  run: InspectionRun,
+  expectedSession?: Promise<InspectionBrowserSession>,
+) => {
+  if (expectedSession && run.browserSession !== expectedSession) return;
+
   if (run.browserSessionExpiration) {
     clearTimeout(run.browserSessionExpiration);
     run.browserSessionExpiration = undefined;
@@ -61,8 +68,31 @@ const closeRunBrowserSession = async (run: InspectionRun) => {
   }
 };
 
+const closeProbeBrowserSession = async (
+  probe: InspectionProbe,
+  expectedSession?: Promise<InspectionBrowserSession>,
+) => {
+  if (expectedSession && probe.browserSession !== expectedSession) return;
+
+  const session = probe.browserSession;
+  probe.browserSession = undefined;
+  if (session) {
+    await session
+      .then((browserSession) => browserSession.close())
+      .catch(() => undefined);
+  }
+};
+
+export const cancelInspectionProbe = (probe: InspectionProbe) => {
+  probe.abortController?.abort();
+};
+
 const deleteInspectionRun = (runId: string, run: InspectionRun) => {
   inspectionRuns.delete(runId);
+  for (const probe of run.probes.values()) {
+    cancelInspectionProbe(probe);
+    void closeProbeBrowserSession(probe);
+  }
   void closeRunBrowserSession(run);
 };
 
@@ -139,12 +169,26 @@ export const getOrCreateInspectionBrowserSession = (
   return run.browserSession;
 };
 
-export const getInspectionBrowserSession = (run: InspectionRun) => {
-  return run.browserSession;
+export const disposeInspectionBrowserSession = (
+  run: InspectionRun,
+  expectedSession?: Promise<InspectionBrowserSession>,
+) => {
+  return closeRunBrowserSession(run, expectedSession);
 };
 
-export const disposeInspectionBrowserSession = (run: InspectionRun) => {
-  return closeRunBrowserSession(run);
+export const getOrCreateInspectionProbeBrowserSession = (
+  probe: InspectionProbe,
+  create: () => Promise<InspectionBrowserSession>,
+) => {
+  probe.browserSession ??= create();
+  return probe.browserSession;
+};
+
+export const disposeInspectionProbeBrowserSession = (
+  probe: InspectionProbe,
+  expectedSession?: Promise<InspectionBrowserSession>,
+) => {
+  return closeProbeBrowserSession(probe, expectedSession);
 };
 
 export const getOrCreateToolDiscovery = (
@@ -160,7 +204,14 @@ export const createInspectionProbe = (run: InspectionRun, toolId: string) => {
 
   if (run.probes.size >= MAX_PROBES_PER_RUN) {
     const oldestProbeId = run.probes.keys().next().value as string | undefined;
-    if (oldestProbeId) run.probes.delete(oldestProbeId);
+    if (oldestProbeId) {
+      const oldestProbe = run.probes.get(oldestProbeId);
+      if (oldestProbe) {
+        cancelInspectionProbe(oldestProbe);
+        void closeProbeBrowserSession(oldestProbe);
+      }
+      run.probes.delete(oldestProbeId);
+    }
   }
 
   const probe: InspectionProbe = {
@@ -205,11 +256,17 @@ export const subscribeToInspectionProbe = (
 
 export const getOrStartInspectionProbe = (
   probe: InspectionProbe,
-  execute: () => Promise<void>,
+  execute: (signal: AbortSignal) => Promise<void>,
 ) => {
   if (!probe.execution) {
     probe.status = "running";
-    probe.execution = execute();
+    const abortController = new AbortController();
+    probe.abortController = abortController;
+    probe.execution = execute(abortController.signal).finally(() => {
+      if (probe.abortController === abortController) {
+        probe.abortController = undefined;
+      }
+    });
   }
 
   return probe.execution;

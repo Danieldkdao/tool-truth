@@ -1,5 +1,4 @@
 import {
-  awaitWithSignal,
   findToolOrThrow,
   isVerificationTerminal,
   readRequiredToolId,
@@ -39,6 +38,8 @@ export const createRunVerificationTool = (
     const toolId = readRequiredToolId(input);
     const controller = getController();
     findToolOrThrow(controller.snapshot.tools, toolId);
+    const previousAttempt =
+      controller.snapshot.verificationRecords[toolId]?.attempt ?? 0;
 
     if (controller.snapshot.isBusy) {
       throw new Error(
@@ -46,10 +47,7 @@ export const createRunVerificationTool = (
       );
     }
 
-    const started = await awaitWithSignal(
-      controller.startVerification(toolId),
-      signal,
-    );
+    const started = await controller.startVerification(toolId, signal);
 
     if (!started) {
       throw new Error("The verification could not be started.");
@@ -58,7 +56,8 @@ export const createRunVerificationTool = (
     const snapshot = await waitForControllerSnapshot(
       getController,
       (candidate) =>
-        !candidate.isBusy && isVerificationTerminal(candidate, toolId),
+        !candidate.isBusy &&
+        isVerificationTerminal(candidate, toolId, previousAttempt),
       signal,
     );
 
