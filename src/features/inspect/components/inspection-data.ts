@@ -105,7 +105,9 @@ export type VerificationStatistics = {
 
 export type EvidenceScreenshot = {
   label: string;
-  dataUrl: string;
+  url: string;
+  bytes: number;
+  hash: string;
 };
 
 export type ExecutionEvidenceData = {

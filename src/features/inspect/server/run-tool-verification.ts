@@ -13,6 +13,7 @@ import type {
 import type {
   BrowserbaseSessionStatistics,
   DetectedTool,
+  EvidenceScreenshot,
   EvidenceLogEntry,
   ExecutionEvidenceData,
   NetworkEntry,
@@ -103,7 +104,10 @@ type BrowserSnapshot = Omit<
   sessionStorage: Record<string, SafeValue>;
   inputs: Record<string, SafeValue & { checked?: boolean }>;
   cookies: Record<string, SafeValue>;
-  screenshot: SafeValue & { dataUrl: string };
+  screenshot: SafeValue & {
+    body: Uint8Array;
+    contentType: "image/jpeg";
+  };
   network: ObservedNetworkEntry[];
   runtimeErrors: ObservedRuntimeError[];
 };
@@ -119,6 +123,12 @@ type RunToolVerificationOptions = {
   releaseBrowser: () => Promise<void>;
   signal: AbortSignal;
   report: VerificationReporter;
+  retainScreenshot: (screenshot: {
+    label: string;
+    body: Uint8Array;
+    contentType: "image/jpeg";
+    hash: string;
+  }) => EvidenceScreenshot | undefined;
 };
 
 const createAbortError = () => {
@@ -448,8 +458,9 @@ const captureSnapshot = async (
       animations: "disabled",
       caret: "hide",
       fullPage: false,
+      quality: 55,
       timeout: 8_000,
-      type: "png",
+      type: "jpeg",
     }),
   ]);
 
@@ -474,7 +485,8 @@ const captureSnapshot = async (
     ),
     screenshot: {
       ...hashValue(screenshot),
-      dataUrl: `data:image/png;base64,${Buffer.from(screenshot).toString("base64")}`,
+      body: Uint8Array.from(screenshot),
+      contentType: "image/jpeg",
     },
     network: observedEvidence.network,
     runtimeErrors: observedEvidence.runtimeErrors,
@@ -516,6 +528,7 @@ export const runToolVerification = async ({
   releaseBrowser,
   signal,
   report,
+  retainScreenshot,
 }: RunToolVerificationOptions) => {
   throwIfAborted(signal);
   const startedAt = Date.now();
@@ -735,12 +748,25 @@ export const runToolVerification = async ({
           : `${stateChanges.length} observable changes`,
       );
 
+      const screenshots = [
+        retainScreenshot({
+          label: "Before tool invocation",
+          body: before.screenshot.body,
+          contentType: before.screenshot.contentType,
+          hash: before.screenshot.hash,
+        }),
+        retainScreenshot({
+          label: "After tool invocation",
+          body: after.screenshot.body,
+          contentType: after.screenshot.contentType,
+          hash: after.screenshot.hash,
+        }),
+      ].filter((screenshot): screenshot is EvidenceScreenshot =>
+        Boolean(screenshot),
+      );
       const evidence: ExecutionEvidenceData = {
         runLabel: `Probe ${probeId.slice(0, 12)} · ${tool.name}`,
-        screenshots: [
-          { label: "Before tool invocation", dataUrl: before.screenshot.dataUrl },
-          { label: "After tool invocation", dataUrl: after.screenshot.dataUrl },
-        ],
+        screenshots,
         timeline,
         stateChanges,
         network,

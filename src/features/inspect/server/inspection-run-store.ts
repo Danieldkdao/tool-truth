@@ -2,7 +2,10 @@ import "server-only";
 
 import { randomBytes } from "node:crypto";
 
-import type { DetectedTool } from "@/features/inspect/components/inspection-data";
+import type {
+  DetectedTool,
+  EvidenceScreenshot,
+} from "@/features/inspect/components/inspection-data";
 import type { VerificationStreamEvent } from "@/features/inspect/components/inspection-stream";
 import type {
   BrowserbaseSessionLifecycle,
@@ -15,8 +18,27 @@ import type { ValidatedInspectionTarget } from "@/features/inspect/server/valida
 const RUN_TTL_MS = 60 * 60 * 1000;
 const MAX_ACTIVE_RUNS = 500;
 const MAX_PROBES_PER_RUN = 20;
+const MAX_SCREENSHOTS_PER_PROBE = 2;
+const MAX_SCREENSHOT_BYTES = 1_000_000;
+const MAX_SCREENSHOT_BYTES_PER_RUN = 40_000_000;
+const MAX_SCREENSHOT_BYTES_GLOBALLY = 256_000_000;
 
 type ProbeSubscriber = (event: VerificationStreamEvent) => void;
+
+export type RetainedInspectionScreenshot = {
+  id: string;
+  label: string;
+  contentType: "image/jpeg";
+  body: Uint8Array;
+  bytes: number;
+  hash: string;
+  createdAt: number;
+};
+
+export type RetainInspectionScreenshotInput = Pick<
+  RetainedInspectionScreenshot,
+  "label" | "contentType" | "body" | "hash"
+>;
 
 export type InspectionProbe = {
   id: string;
@@ -29,6 +51,7 @@ export type InspectionProbe = {
   abortController?: AbortController;
   browserSession?: Promise<InspectionBrowserSession>;
   browserbaseLifecycleId?: string;
+  screenshots: Map<string, RetainedInspectionScreenshot>;
 };
 
 export type InspectionRun = {
@@ -40,6 +63,7 @@ export type InspectionRun = {
   createdAt: number;
   expiresAt: number;
   browserbaseSessions: BrowserbaseSessionLifecycle[];
+  discoveryBrowserbaseLifecycleId?: string;
   browserSession?: Promise<InspectionBrowserSession>;
   browserSessionExpiration?: NodeJS.Timeout;
   toolDiscovery?: Promise<DetectedTool[]>;
@@ -60,7 +84,11 @@ const createBrowserbaseLifecycleReporter = (
   probe?: InspectionProbe,
 ): BrowserbaseSessionLifecycleReporter => {
   return (lifecycle) => {
-    if (probe) probe.browserbaseLifecycleId = lifecycle.lifecycleId;
+    if (probe) {
+      probe.browserbaseLifecycleId = lifecycle.lifecycleId;
+    } else {
+      run.discoveryBrowserbaseLifecycleId = lifecycle.lifecycleId;
+    }
     run.browserbaseSessions ??= [];
     const index = run.browserbaseSessions.findIndex(
       (session) => session.lifecycleId === lifecycle.lifecycleId,
@@ -222,6 +250,17 @@ export const getOrCreateInspectionProbeBrowserSession = (
   return probe.browserSession;
 };
 
+export const getInspectionDiscoveryBrowserbaseLifecycle = (
+  run: InspectionRun,
+) => {
+  if (!run.discoveryBrowserbaseLifecycleId) return undefined;
+
+  return run.browserbaseSessions.find(
+    (session) =>
+      session.lifecycleId === run.discoveryBrowserbaseLifecycleId,
+  );
+};
+
 export const getInspectionProbeBrowserbaseLifecycle = (
   run: InspectionRun,
   probe: InspectionProbe,
@@ -231,6 +270,101 @@ export const getInspectionProbeBrowserbaseLifecycle = (
   return run.browserbaseSessions.find(
     (session) => session.lifecycleId === probe.browserbaseLifecycleId,
   );
+};
+
+const getRetainedScreenshotBytes = (run?: InspectionRun) => {
+  const runs = run ? [run] : inspectionRuns.values();
+  let bytes = 0;
+
+  for (const candidateRun of runs) {
+    for (const probe of candidateRun.probes.values()) {
+      probe.screenshots ??= new Map();
+      for (const screenshot of probe.screenshots.values()) {
+        bytes += screenshot.bytes;
+      }
+    }
+  }
+
+  return bytes;
+};
+
+const removeOldestScreenshot = (run?: InspectionRun) => {
+  const runs = run ? [run] : inspectionRuns.values();
+  let oldest:
+    | { probe: InspectionProbe; screenshot: RetainedInspectionScreenshot }
+    | undefined;
+
+  for (const candidateRun of runs) {
+    for (const probe of candidateRun.probes.values()) {
+      probe.screenshots ??= new Map();
+      for (const screenshot of probe.screenshots.values()) {
+        if (!oldest || screenshot.createdAt < oldest.screenshot.createdAt) {
+          oldest = { probe, screenshot };
+        }
+      }
+    }
+  }
+
+  if (!oldest) return false;
+  oldest.probe.screenshots.delete(oldest.screenshot.id);
+  return true;
+};
+
+export const retainInspectionProbeScreenshot = (
+  run: InspectionRun,
+  probe: InspectionProbe,
+  input: RetainInspectionScreenshotInput,
+): EvidenceScreenshot | undefined => {
+  const bytes = input.body.byteLength;
+  if (bytes === 0 || bytes > MAX_SCREENSHOT_BYTES) return undefined;
+
+  probe.screenshots ??= new Map();
+  while (probe.screenshots.size >= MAX_SCREENSHOTS_PER_PROBE) {
+    const oldestScreenshotId = probe.screenshots.keys().next().value as
+      | string
+      | undefined;
+    if (!oldestScreenshotId) break;
+    probe.screenshots.delete(oldestScreenshotId);
+  }
+
+  while (
+    getRetainedScreenshotBytes(run) + bytes > MAX_SCREENSHOT_BYTES_PER_RUN
+  ) {
+    if (!removeOldestScreenshot(run)) return undefined;
+  }
+
+  while (
+    getRetainedScreenshotBytes() + bytes > MAX_SCREENSHOT_BYTES_GLOBALLY
+  ) {
+    if (!removeOldestScreenshot()) return undefined;
+  }
+
+  const id = `screenshot_${randomBytes(18).toString("base64url")}`;
+  const screenshot: RetainedInspectionScreenshot = {
+    id,
+    label: input.label,
+    contentType: input.contentType,
+    body: Uint8Array.from(input.body),
+    bytes,
+    hash: input.hash,
+    createdAt: Date.now(),
+  };
+  probe.screenshots.set(id, screenshot);
+
+  return {
+    label: screenshot.label,
+    url: `/api/inspection/${encodeURIComponent(run.id)}/probe/${encodeURIComponent(probe.id)}/screenshot/${encodeURIComponent(id)}`,
+    bytes: screenshot.bytes,
+    hash: screenshot.hash,
+  };
+};
+
+export const getInspectionProbeScreenshot = (
+  probe: InspectionProbe,
+  screenshotId: string,
+) => {
+  probe.screenshots ??= new Map();
+  return probe.screenshots.get(screenshotId);
 };
 
 export const disposeInspectionProbeBrowserSession = (
@@ -271,6 +405,7 @@ export const createInspectionProbe = (run: InspectionRun, toolId: string) => {
     createdAt: Date.now(),
     events: [],
     subscribers: new Set(),
+    screenshots: new Map(),
   };
 
   run.probes.set(probe.id, probe);

@@ -233,6 +233,10 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
     <DetectedToolsSectionProgress progress={progress.tools} />
   );
 
+  const fallbackScreenshot =
+    selectedVerification?.evidenceData?.screenshots?.[
+      selectedVerification.evidenceData.screenshots.length - 1
+    ];
   const activeBrowserSession =
     selectedVerification?.status === "running"
       ? selectedVerification.browserSession
@@ -241,16 +245,13 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
     <BrowserPreviewLiveView
       session={activeBrowserSession}
       toolName={selectedTool?.name}
-      fallbackScreenshot={
-        selectedVerification?.evidenceData?.screenshots?.[
-          selectedVerification.evidenceData.screenshots.length - 1
-        ]
-      }
+      fallbackScreenshot={fallbackScreenshot}
     />
   ) : tools ? (
     <BrowserPreviewLocalPlaceholder
       toolName={selectedTool?.name}
       verificationStatus={selectedVerification?.status}
+      fallbackScreenshot={fallbackScreenshot}
     />
   ) : (
     <BrowserPreviewSectionProgress progress={progress.browser} />

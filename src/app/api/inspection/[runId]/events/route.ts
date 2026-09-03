@@ -3,6 +3,7 @@ import { discoverWebMcpTools } from "@/features/inspect/server/discover-webmcp-t
 import { getInspectionBrowserFailureMessage } from "@/features/inspect/server/stagehand-browser";
 import {
   disposeInspectionBrowserSession,
+  getInspectionDiscoveryBrowserbaseLifecycle,
   getInspectionRun,
   getOrCreateInspectionBrowserSession,
   getOrCreateToolDiscovery,
@@ -54,8 +55,7 @@ export const GET = async (
         controller.enqueue(encodeEvent(encoder, eventId, event));
       };
       const sendLatestBrowserSession = () => {
-        const lifecycle =
-          run.browserbaseSessions[run.browserbaseSessions.length - 1];
+        const lifecycle = getInspectionDiscoveryBrowserbaseLifecycle(run);
         if (!lifecycle) return;
 
         send({

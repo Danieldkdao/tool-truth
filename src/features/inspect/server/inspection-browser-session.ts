@@ -201,16 +201,10 @@ export const openInspectionBrowserSession = async (
   try {
     await initialize(reportStartup);
   } catch (error) {
-    const isTimeout =
-      error instanceof Error && /timed?\s*out|timeout/i.test(error.message);
     const cleanupFailed = await cleanUpStartupFailure();
     updateBrowserbaseLifecycle({
-      status: cleanupFailed ? "failed" : isTimeout ? "timed_out" : "failed",
-      terminationReason: cleanupFailed
-        ? "cleanup_failed"
-        : isTimeout
-          ? "timed_out"
-          : "failed",
+      status: "failed",
+      terminationReason: cleanupFailed ? "cleanup_failed" : "failed",
       endedAt: Date.now(),
     });
     throw error;

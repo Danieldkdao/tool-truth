@@ -12,6 +12,7 @@ import {
   getOrCreateInspectionProbeBrowserSession,
   getOrStartInspectionProbe,
   publishInspectionProbeEvent,
+  retainInspectionProbeScreenshot,
   subscribeToInspectionProbe,
 } from "@/features/inspect/server/inspection-run-store";
 import { runToolVerification } from "@/features/inspect/server/run-tool-verification";
@@ -36,10 +37,6 @@ const isTerminalEvent = (event: VerificationStreamEvent) => {
 
 const isAbortError = (error: unknown) => {
   return error instanceof DOMException && error.name === "AbortError";
-};
-
-const isTimeoutError = (error: unknown) => {
-  return error instanceof Error && /timed?\s*out|timeout/i.test(error.message);
 };
 
 export const GET = async (request: Request, { params }: ProbeParams) => {
@@ -132,8 +129,7 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
           let terminationReason:
             | "completed"
             | "failed"
-            | "canceled"
-            | "timed_out" = "completed";
+            | "canceled" = "completed";
 
           try {
             await runToolVerification({
@@ -146,13 +142,11 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
                 disposeInspectionProbeBrowserSession(probe, browserSession),
               signal,
               report: (event) => publishInspectionProbeEvent(probe, event),
+              retainScreenshot: (screenshot) =>
+                retainInspectionProbeScreenshot(run, probe, screenshot),
             });
           } catch (error) {
-            terminationReason = signal.aborted
-              ? "canceled"
-              : isTimeoutError(error)
-                ? "timed_out"
-                : "failed";
+            terminationReason = signal.aborted ? "canceled" : "failed";
             throw error;
           } finally {
             await disposeInspectionProbeBrowserSession(

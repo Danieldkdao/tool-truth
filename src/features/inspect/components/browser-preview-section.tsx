@@ -265,7 +265,7 @@ export const BrowserPreviewLiveView = ({
           style={
             fallbackScreenshot
               ? {
-                  backgroundImage: `url('${fallbackScreenshot.dataUrl}')`,
+                  backgroundImage: `url('${fallbackScreenshot.url}')`,
                 }
               : undefined
           }
@@ -302,13 +302,23 @@ export const BrowserPreviewLiveView = ({
 type BrowserPreviewLocalPlaceholderProps = {
   toolName?: string;
   verificationStatus?: ToolVerificationStatus;
+  fallbackScreenshot?: EvidenceScreenshot;
 };
 
 const getLocalBrowserPreviewCopy = (
   toolName: string | undefined,
   verificationStatus: ToolVerificationStatus | undefined,
+  hasScreenshot: boolean,
 ) => {
   const selectedToolLabel = toolName ?? "the selected tool";
+
+  if (hasScreenshot) {
+    return {
+      title: "Captured browser evidence",
+      description:
+        "This is the latest durable screenshot from the disposable local verification browser.",
+    };
+  }
 
   if (verificationStatus === "running") {
     return {
@@ -325,7 +335,7 @@ const getLocalBrowserPreviewCopy = (
     return {
       title: "Browser evidence runs locally",
       description:
-        "ToolTruth keeps one disposable local browser open from discovery through verification. Live View will appear here when the runner is switched to Browserbase.",
+        "ToolTruth uses a fresh disposable browser for each local verification. Live View will appear here when the runner is switched to Browserbase.",
     };
   }
 
@@ -338,8 +348,13 @@ const getLocalBrowserPreviewCopy = (
 export const BrowserPreviewLocalPlaceholder = ({
   toolName,
   verificationStatus,
+  fallbackScreenshot,
 }: BrowserPreviewLocalPlaceholderProps) => {
-  const copy = getLocalBrowserPreviewCopy(toolName, verificationStatus);
+  const copy = getLocalBrowserPreviewCopy(
+    toolName,
+    verificationStatus,
+    Boolean(fallbackScreenshot),
+  );
 
   return (
     <div className="inspect-browser-frame mx-4 my-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-foreground/15 bg-card shadow-[0_16px_44px_-24px_oklch(0.22_0.02_260/0.38)] sm:mx-5 sm:my-5">
@@ -355,8 +370,19 @@ export const BrowserPreviewLocalPlaceholder = ({
         </div>
       </div>
 
-      <div className="inspect-browser flex min-h-[31rem] flex-1 items-center justify-center bg-card p-8">
-        <div className="max-w-md text-center" aria-live="polite">
+      <div
+        className="inspect-browser relative flex min-h-[31rem] flex-1 items-center justify-center overflow-hidden bg-card bg-contain bg-center bg-no-repeat p-8"
+        style={
+          fallbackScreenshot
+            ? { backgroundImage: `url('${fallbackScreenshot.url}')` }
+            : undefined
+        }
+        aria-label={fallbackScreenshot?.label}
+      >
+        {fallbackScreenshot && (
+          <div className="absolute inset-0 bg-card/80 backdrop-blur-[1px]" />
+        )}
+        <div className="relative max-w-md text-center" aria-live="polite">
           <LockKeyhole className="mx-auto size-7 text-primary" aria-hidden="true" />
           <h2 className="mt-5 font-sans text-2xl font-semibold">
             {copy.title}
