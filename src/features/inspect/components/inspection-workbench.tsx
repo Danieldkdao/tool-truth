@@ -210,6 +210,8 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
             ? "Running verification…"
             : status === "passed"
               ? "Verification passed"
+              : status === "inconclusive"
+                ? "Verification inconclusive"
               : status === "failed"
                 ? "Verification failed"
                 : status === "error"

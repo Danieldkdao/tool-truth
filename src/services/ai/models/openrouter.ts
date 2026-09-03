@@ -1,9 +1,15 @@
 import { serverEnv } from "@/data/env/server";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 
-export const TOOLTRUTH_ANALYSIS_MODEL_ID = "minimax/minimax-m3:free";
+export const TOOLTRUTH_ANALYSIS_MODEL_ID = "qwen/qwen3.8-flash";
+export const TOOLTRUTH_SEMANTIC_MODEL_IDS = {
+  contractChecker: "qwen/qwen3.8-flash",
+  evidenceChecker: "minimax/minimax-m3:free",
+} as const;
 
-export const getToolTruthAnalysisModel = () => {
+export const getToolTruthAnalysisModel = (
+  modelId: string = TOOLTRUTH_ANALYSIS_MODEL_ID,
+) => {
   if (!serverEnv.OPENROUTER_API_KEY) {
     return undefined;
   }
@@ -12,5 +18,5 @@ export const getToolTruthAnalysisModel = () => {
     apiKey: serverEnv.OPENROUTER_API_KEY,
   });
 
-  return openrouter(TOOLTRUTH_ANALYSIS_MODEL_ID);
+  return openrouter(modelId);
 };

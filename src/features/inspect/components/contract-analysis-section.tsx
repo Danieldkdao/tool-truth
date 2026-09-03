@@ -74,6 +74,8 @@ export const ContractAnalysisSection = ({
         : "pending";
   const hasFailed = verdict === "failed" || verdict === "error";
   const hasPassed = verdict === "passed";
+  const isInconclusive = verdict === "inconclusive";
+  const isError = verdict === "error";
   const hasSuggestedRepair =
     verdict === "failed" && Boolean(data?.suggestedRepair.trim());
   const canExportEvidenceReceipt =
@@ -88,6 +90,8 @@ export const ContractAnalysisSection = ({
             ? "border-destructive/20 bg-destructive/[0.055]"
             : hasPassed
               ? "border-emerald-600/20 bg-emerald-600/[0.055]"
+              : isInconclusive
+                ? "border-amber-600/20 bg-amber-600/[0.055]"
               : "border-primary/20 bg-primary/[0.045]"
         }`}
       >
@@ -101,6 +105,8 @@ export const ContractAnalysisSection = ({
               ? "border-destructive"
               : hasPassed
                 ? "border-emerald-600"
+                : isInconclusive
+                  ? "border-amber-600"
                 : "border-primary"
           }`}
         >
@@ -110,6 +116,8 @@ export const ContractAnalysisSection = ({
                 ? "text-destructive"
                 : hasPassed
                   ? "text-emerald-700 dark:text-emerald-400"
+                  : isInconclusive
+                    ? "text-amber-700 dark:text-amber-400"
                   : "text-primary"
             }`}
           >
@@ -117,8 +125,12 @@ export const ContractAnalysisSection = ({
               ? "Verification error"
               : isRunning
                 ? "Collecting runtime evidence"
+                : isError
+                  ? "Verification error"
                 : hasPassed
                   ? "Verification passed"
+                  : isInconclusive
+                    ? "Verification inconclusive"
                   : verdict === "failed"
                     ? "Verification failed"
                     : "Ready to run"}
@@ -127,10 +139,22 @@ export const ContractAnalysisSection = ({
             {error ??
               (isRunning
                 ? "The local browser is invoking the tool and comparing before-and-after state."
+                : isError
+                  ? "The tool invocation did not complete successfully, so deterministic evidence ended the verification."
                 : verdict === "failed"
-                  ? `${data?.unexpectedStateChanges ?? 0} unexpected changes were observed.`
+                  ? data?.decisionBasis === "hard_evidence"
+                    ? `${data.unexpectedStateChanges} unexpected changes were confirmed by deterministic evidence.`
+                    : "Both semantic evaluators found that the observed behavior did not satisfy the declared contract."
+                  : isInconclusive
+                    ? data?.consensus === "disagreement"
+                      ? "The two semantic evaluators disagreed, so ToolTruth did not force a verdict."
+                      : data?.consensus === "agreement"
+                        ? "Both semantic evaluators agreed that the available evidence was insufficient for a reliable verdict."
+                        : "Two valid semantic evaluations were not available, so ToolTruth did not force a verdict."
                   : hasPassed
-                    ? "No behavioral mismatch was observed in this run."
+                    ? data?.decisionBasis === "evaluator_consensus"
+                      ? "Both semantic evaluators agreed that the evidence supports the declared behavior."
+                      : "No behavioral mismatch was observed in this run."
                     : "Run the selected tool in an isolated browser to test its claims.")}
           </p>
         </div>
@@ -181,6 +205,99 @@ export const ContractAnalysisSection = ({
           <p className="mt-2 leading-7 text-foreground">{finding.observed}</p>
         </div>
       </section>
+
+      {data && (
+        <section className="border-t border-border px-6 py-6">
+          <h3 className="font-sans font-semibold">Decision basis</h3>
+          <p className="mt-2 leading-7 text-muted-foreground">
+            {data.decisionBasis === "hard_evidence"
+              ? "The deterministic engine found an indisputable result, so AI could explain it but could not override it."
+              : data.decisionBasis === "evaluator_consensus"
+                ? "No hard violation was found. Two independent semantic evaluations agreed on the final verdict."
+                : "No hard violation was found, but the semantic evaluation layer could not establish consensus."}
+          </p>
+          <p className="mt-2 font-medium text-muted-foreground">
+            Evidence packet: {data.evidenceStatus}
+          </p>
+
+          {data.deterministic.facts.length > 0 && (
+            <ul className="mt-4 space-y-2 border-l-2 border-border pl-4 text-muted-foreground">
+              {data.deterministic.facts.map((fact) => (
+                <li key={fact.id}>{fact.statement}</li>
+              ))}
+            </ul>
+          )}
+
+          {data.evaluators.length > 0 && (
+            <div className="mt-5 space-y-3">
+              {data.evaluators.map((result) => {
+                const evaluation = result.evaluation;
+                const label =
+                  result.evaluator === "contract_checker"
+                    ? "Contract checker"
+                    : "Evidence checker";
+
+                return (
+                  <article
+                    key={result.evaluator}
+                    className="rounded-lg border border-border bg-muted/35 p-4"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h4 className="font-sans font-semibold">{label}</h4>
+                      <p className="font-medium text-muted-foreground">
+                        {evaluation
+                          ? `${evaluation.verdict.replace("_", " ")} · ${Math.round(evaluation.confidence * 100)}% confidence`
+                          : result.status}
+                      </p>
+                    </div>
+                    <p className="mt-3 leading-7 text-foreground/85">
+                      {evaluation?.summary ?? result.error}
+                    </p>
+                    {evaluation && (
+                      <details className="mt-3">
+                        <summary className="cursor-pointer font-medium text-primary">
+                          Review requirement evidence
+                        </summary>
+                        <ul className="mt-3 space-y-3 border-l-2 border-border pl-4">
+                          {evaluation.requirements.map((requirement, index) => (
+                            <li key={`${requirement.requirement}-${index}`}>
+                              <p className="font-medium">
+                                {requirement.status}: {requirement.requirement}
+                              </p>
+                              <p className="mt-1 leading-7 text-muted-foreground">
+                                {requirement.reason}
+                              </p>
+                              <p className="mt-1 break-all font-mono text-muted-foreground">
+                                Evidence: {requirement.evidenceIds.join(", ") || "none"}
+                              </p>
+                            </li>
+                          ))}
+                        </ul>
+                        {evaluation.uncertainties.length > 0 && (
+                          <div className="mt-4 border-l-2 border-amber-500/50 pl-4">
+                            <p className="font-medium text-amber-700 dark:text-amber-400">
+                              Uncertainties
+                            </p>
+                            <ul className="mt-2 space-y-2 text-muted-foreground">
+                              {evaluation.uncertainties.map(
+                                (uncertainty, index) => (
+                                  <li key={`${uncertainty}-${index}`}>
+                                    {uncertainty}
+                                  </li>
+                                ),
+                              )}
+                            </ul>
+                          </div>
+                        )}
+                      </details>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="border-t border-border bg-accent/35 px-6 py-6">
         <div className="flex items-center justify-between gap-4">

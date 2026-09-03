@@ -107,6 +107,11 @@ export const DetectedToolsSection = ({
                       className="size-4 text-emerald-600 dark:text-emerald-400"
                       aria-label={`${tool.name} verification passed`}
                     />
+                  ) : status === "inconclusive" ? (
+                    <AlertCircle
+                      className="size-4 text-amber-600 dark:text-amber-400"
+                      aria-label={`${tool.name} verification was inconclusive`}
+                    />
                   ) : status === "failed" || status === "error" ? (
                     <XCircle
                       className="size-4 text-destructive"
@@ -130,6 +135,8 @@ export const DetectedToolsSection = ({
                     className={`mt-1 block font-medium lg:mt-2 ${
                       status === "passed"
                         ? "text-emerald-700 dark:text-emerald-400"
+                        : status === "inconclusive"
+                          ? "text-amber-700 dark:text-amber-400"
                         : status === "failed" || status === "error"
                           ? "text-destructive"
                           : status === "running"

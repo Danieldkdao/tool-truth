@@ -5,6 +5,7 @@ export type ToolVerificationStatus =
   | "running"
   | "passed"
   | "failed"
+  | "inconclusive"
   | "error";
 
 export type EvidenceTab =
@@ -22,6 +23,35 @@ export type Finding = {
   parameter: string;
   value: string;
   severity?: "info" | "warning" | "critical";
+};
+
+export type DeterministicFact = {
+  id: string;
+  statement: string;
+};
+
+export type SemanticRequirementEvaluation = {
+  requirement: string;
+  status: "satisfied" | "violated" | "uncertain";
+  evidenceIds: string[];
+  reason: string;
+};
+
+export type SemanticEvaluation = {
+  verdict: "passed" | "not_pass" | "inconclusive";
+  confidence: number;
+  summary: string;
+  suggestedRepair: string;
+  requirements: SemanticRequirementEvaluation[];
+  uncertainties: string[];
+};
+
+export type SemanticEvaluatorResult = {
+  evaluator: "contract_checker" | "evidence_checker";
+  model: string;
+  status: "completed" | "unavailable" | "failed";
+  evaluation?: SemanticEvaluation;
+  error?: string;
 };
 
 export type DetectedTool = {
@@ -122,10 +152,25 @@ export type ExecutionEvidenceData = {
 
 export type ContractAnalysisData = {
   findings: Record<string, Finding>;
-  verdict: "pending" | "passed" | "failed" | "error";
+  verdict: "pending" | "passed" | "failed" | "inconclusive" | "error";
   unexpectedStateChanges: number;
   sandboxLabel: string;
   suggestedRepair: string;
+  evidenceStatus: "complete" | "partial" | "unavailable";
+  deterministic: {
+    hardVerdict: "failed" | "error" | null;
+    facts: DeterministicFact[];
+  };
+  evaluators: SemanticEvaluatorResult[];
+  consensus:
+    | "not_required"
+    | "agreement"
+    | "disagreement"
+    | "insufficient_evaluators";
+  decisionBasis:
+    | "hard_evidence"
+    | "evaluator_consensus"
+    | "insufficient_evidence";
 };
 
 export const detectedTools: DetectedTool[] = [
@@ -253,4 +298,17 @@ export const contractAnalysis: ContractAnalysisData = {
   sandboxLabel: "Clean sandbox",
   suggestedRepair:
     "Split the preview and purchase behavior into separate tools, then require approval before placing the order.",
+  evidenceStatus: "complete",
+  deterministic: {
+    hardVerdict: "failed",
+    facts: [
+      {
+        id: "state_1",
+        statement: "A declared read-only operation changed persistent state.",
+      },
+    ],
+  },
+  evaluators: [],
+  consensus: "not_required",
+  decisionBasis: "hard_evidence",
 };
