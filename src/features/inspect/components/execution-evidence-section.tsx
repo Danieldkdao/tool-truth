@@ -16,9 +16,13 @@ import type {
   ExecutionEvidenceData,
 } from "@/features/inspect/components/inspection-data";
 import type { SectionProgress } from "@/features/inspect/components/inspection-stream";
+import { SessionReplayPlayer } from "@/features/inspect/components/session-replay-player";
 
 type ExecutionEvidenceSectionProps = {
   data: ExecutionEvidenceData;
+  runId: string;
+  probeId: string;
+  replayAvailable: boolean;
   activeTab: EvidenceTab;
   onActiveTabChange: (tab: EvidenceTab) => void;
 };
@@ -28,10 +32,14 @@ const evidenceTabs: EvidenceTab[] = [
   "State diff",
   "Network",
   "Logs",
+  "Replay",
 ];
 
 export const ExecutionEvidenceSection = ({
   data,
+  runId,
+  probeId,
+  replayAvailable,
   activeTab,
   onActiveTabChange,
 }: ExecutionEvidenceSectionProps) => {
@@ -54,7 +62,8 @@ export const ExecutionEvidenceSection = ({
             <TabsTrigger
               key={tab}
               value={tab}
-              className="cursor-pointer min-h-8 rounded-lg px-3 text-base font-medium data-active:bg-accent/70 data-active:text-foreground data-active:shadow-xs"
+              disabled={tab === "Replay" && !replayAvailable}
+              className="cursor-pointer min-h-8 rounded-lg px-3 text-base font-medium data-active:bg-accent/70 data-active:text-foreground data-active:shadow-xs disabled:cursor-not-allowed disabled:opacity-45"
             >
               {tab}
             </TabsTrigger>
@@ -171,6 +180,17 @@ export const ExecutionEvidenceSection = ({
               </li>
             ))}
           </ol>
+        </TabsContent>
+
+        <TabsContent value="Replay" className="text-base">
+          {activeTab === "Replay" && replayAvailable && (
+            <SessionReplayPlayer runId={runId} probeId={probeId} />
+          )}
+          {activeTab === "Replay" && !replayAvailable && (
+            <p className="py-6 text-muted-foreground">
+              Session replay is available for completed Browserbase verifications.
+            </p>
+          )}
         </TabsContent>
       </div>
     </Tabs>

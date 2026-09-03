@@ -28,6 +28,7 @@ export type InspectionProbe = {
   execution?: Promise<void>;
   abortController?: AbortController;
   browserSession?: Promise<InspectionBrowserSession>;
+  browserbaseLifecycleId?: string;
 };
 
 export type InspectionRun = {
@@ -56,8 +57,10 @@ globalForInspectionRuns.toolTruthInspectionRuns = inspectionRuns;
 
 const createBrowserbaseLifecycleReporter = (
   run: InspectionRun,
+  probe?: InspectionProbe,
 ): BrowserbaseSessionLifecycleReporter => {
   return (lifecycle) => {
+    if (probe) probe.browserbaseLifecycleId = lifecycle.lifecycleId;
     run.browserbaseSessions ??= [];
     const index = run.browserbaseSessions.findIndex(
       (session) => session.lifecycleId === lifecycle.lifecycleId,
@@ -213,8 +216,21 @@ export const getOrCreateInspectionProbeBrowserSession = (
     reportLifecycle: BrowserbaseSessionLifecycleReporter,
   ) => Promise<InspectionBrowserSession>,
 ) => {
-  probe.browserSession ??= create(createBrowserbaseLifecycleReporter(run));
+  probe.browserSession ??= create(
+    createBrowserbaseLifecycleReporter(run, probe),
+  );
   return probe.browserSession;
+};
+
+export const getInspectionProbeBrowserbaseLifecycle = (
+  run: InspectionRun,
+  probe: InspectionProbe,
+) => {
+  if (!probe.browserbaseLifecycleId) return undefined;
+
+  return run.browserbaseSessions.find(
+    (session) => session.lifecycleId === probe.browserbaseLifecycleId,
+  );
 };
 
 export const disposeInspectionProbeBrowserSession = (

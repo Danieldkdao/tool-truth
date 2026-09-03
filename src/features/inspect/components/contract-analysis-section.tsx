@@ -60,14 +60,17 @@ export const ContractAnalysisSection = ({
   error,
   onRunVerification,
 }: ContractAnalysisSectionProps) => {
-  const recordedFinding = data?.findings[selectedTool.id];
+  const analysisFindings = data ? Object.values(data.findings) : [];
+  const recordedFinding =
+    data?.findings[selectedTool.id] ??
+    (analysisFindings.length === 1 ? analysisFindings[0] : undefined);
   const finding = recordedFinding ?? createPendingFinding(selectedTool);
   const verdict = error
     ? "error"
     : isRunning
       ? "pending"
-      : recordedFinding
-        ? data?.verdict
+      : data
+        ? data.verdict
         : "pending";
   const hasFailed = verdict === "failed" || verdict === "error";
   const hasPassed = verdict === "passed";
@@ -75,6 +78,7 @@ export const ContractAnalysisSection = ({
     verdict === "failed" && Boolean(data?.suggestedRepair.trim());
   const canExportEvidenceReceipt =
     verdict === "failed" && Boolean(recordedFinding);
+  const hasRun = Boolean(data || error);
 
   return (
     <aside className="inspect-analysis border-t border-border bg-card">
@@ -130,6 +134,26 @@ export const ContractAnalysisSection = ({
                     : "Run the selected tool in an isolated browser to test its claims.")}
           </p>
         </div>
+
+        <Button
+          size="lg"
+          onClick={onRunVerification}
+          disabled={isBusy}
+          className="mt-5 min-h-12 w-full rounded-lg px-4 text-base font-semibold disabled:cursor-wait"
+        >
+          {isBusy ? (
+            <Spinner className="size-4" />
+          ) : (
+            <Play className="size-4" fill="currentColor" aria-hidden="true" />
+          )}
+          {isRunning
+            ? "Running verification…"
+            : isBusy
+              ? "Verification in progress…"
+              : hasRun
+                ? "Run again"
+                : "Run verification"}
+        </Button>
       </section>
 
       <section className="space-y-4 px-6 py-6">
@@ -177,23 +201,6 @@ export const ContractAnalysisSection = ({
           </div>
         </dl>
 
-        <Button
-          size="lg"
-          onClick={onRunVerification}
-          disabled={isBusy}
-          className="mt-5 min-h-12 w-full rounded-lg px-4 text-base font-semibold disabled:cursor-wait"
-        >
-          {isBusy ? (
-            <Spinner className="size-4" />
-          ) : (
-            <Play className="size-4" fill="currentColor" aria-hidden="true" />
-          )}
-          {isRunning
-            ? "Running verification…"
-            : isBusy
-              ? "Verification in progress…"
-              : "Run verification"}
-        </Button>
       </section>
 
       <section className="border-t border-border px-6 py-6">

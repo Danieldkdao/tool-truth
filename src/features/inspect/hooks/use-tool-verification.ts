@@ -15,6 +15,7 @@ import type {
 
 export type ToolVerificationRecord = {
   attempt: number;
+  probeId: string | null;
   status: ToolVerificationStatus;
   error: string | null;
   browserSession: BrowserSessionView | null;
@@ -43,6 +44,7 @@ type VerificationAction =
 
 const createInitialRecord = (attempt = 0): ToolVerificationRecord => ({
   attempt,
+  probeId: null,
   status: "idle",
   error: null,
   browserSession: null,
@@ -151,7 +153,7 @@ const reduceVerification = (
               error: "The probe completed without returning an analysis.",
             };
       case "probe.connected":
-        return record;
+        return { ...record, probeId: event.probeId };
     }
   });
 };

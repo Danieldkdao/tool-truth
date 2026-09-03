@@ -6,4 +6,5 @@ export type EvidenceView =
   | "timeline"
   | "state_diff"
   | "network"
-  | "logs";
+  | "logs"
+  | "replay";

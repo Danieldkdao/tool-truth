@@ -586,7 +586,10 @@ export const runToolVerification = async ({
       await validateInspectionUrl(page.url());
       recordTimeline("Target ready", safeUrlPath(page.url()));
 
-      const tool = toDetectedTool(liveTool);
+      const tool = {
+        ...toDetectedTool(liveTool),
+        id: selectedTool.id,
+      };
       const toolInput = await generateSafeToolInput(
         tool,
         recordAiActivity,

@@ -7,7 +7,12 @@ export type ToolVerificationStatus =
   | "failed"
   | "error";
 
-export type EvidenceTab = "Timeline" | "State diff" | "Network" | "Logs";
+export type EvidenceTab =
+  | "Timeline"
+  | "State diff"
+  | "Network"
+  | "Logs"
+  | "Replay";
 
 export type Finding = {
   title: string;

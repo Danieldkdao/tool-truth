@@ -261,9 +261,12 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
       <ExecutionEvidenceSectionProgress
         progress={selectedVerification.evidenceProgress}
       />
-    ) : selectedVerification?.evidenceData ? (
+    ) : selectedVerification?.evidenceData && selectedVerification.probeId ? (
       <ExecutionEvidenceSection
         data={selectedVerification.evidenceData}
+        runId={runId}
+        probeId={selectedVerification.probeId}
+        replayAvailable={selectedVerification.browserSession !== null}
         activeTab={activeEvidenceTab}
         onActiveTabChange={(tab) => session.focusEvidence({ tab })}
       />

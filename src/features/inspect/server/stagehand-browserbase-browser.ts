@@ -164,7 +164,7 @@ export const createBrowserbaseInspectionBrowser = (
     browserbaseSessionCreateParams: {
       timeout: BROWSERBASE_SESSION_TIMEOUT_SECONDS,
       browserSettings: {
-        recordSession: false,
+        recordSession: true,
         viewport: INSPECTION_VIEWPORT,
       },
       userMetadata: {
