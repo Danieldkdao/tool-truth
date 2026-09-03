@@ -1,4 +1,8 @@
-import { LockKeyhole } from "lucide-react";
+"use client";
+
+import { useEffect, useState } from "react";
+
+import { Eye, LockKeyhole, WifiOff } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -10,10 +14,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import type {
   BrowserPreviewData,
+  EvidenceScreenshot,
   ToolKey,
   ToolVerificationStatus,
 } from "@/features/inspect/components/inspection-data";
-import type { SectionProgress } from "@/features/inspect/components/inspection-stream";
+import type {
+  BrowserSessionView,
+  SectionProgress,
+} from "@/features/inspect/components/inspection-stream";
 
 type BrowserPreviewSectionProps = {
   data: BrowserPreviewData;
@@ -115,6 +123,182 @@ export const BrowserPreviewSection = ({
   );
 };
 
+type BrowserPreviewLiveViewProps = {
+  session: BrowserSessionView;
+  toolName?: string;
+  fallbackScreenshot?: EvidenceScreenshot;
+};
+
+const getBrowserSessionCopy = (
+  session: BrowserSessionView,
+  disconnected: boolean,
+  toolName: string | undefined,
+) => {
+  if (disconnected && session.status === "running") {
+    return {
+      title: "Live View disconnected",
+      description:
+        "The Browserbase stream lost its connection. Verification may still be running, and captured screenshots remain available as durable evidence.",
+    };
+  }
+
+  switch (session.status) {
+    case "creating":
+      return {
+        title: "Connecting to Live View",
+        description:
+          "Browserbase is creating the isolated browser and preparing its view-only stream.",
+      };
+    case "running":
+      return {
+        title: "Live View unavailable",
+        description: `The isolated browser is still verifying ${toolName ?? "the target"}. Screenshots continue to be captured as durable evidence.`,
+      };
+    case "closing":
+      return {
+        title: "Browser session is closing",
+        description:
+          "The live connection has ended while ToolTruth safely releases the Browserbase session.",
+      };
+    case "completed":
+      return {
+        title: "Browser session complete",
+        description:
+          "Live View is available only while Browserbase is running. The captured screenshots remain with the verification evidence.",
+      };
+    case "canceled":
+      return {
+        title: "Browser session canceled",
+        description:
+          "The live connection closed when this verification was canceled. Captured screenshots remain available as evidence.",
+      };
+    case "timed_out":
+      return {
+        title: "Browser session timed out",
+        description:
+          "Browserbase closed the live connection at the session limit. Captured screenshots remain available as evidence.",
+      };
+    case "failed":
+      return {
+        title: "Browser session disconnected",
+        description:
+          "The Browserbase session ended unexpectedly. Any screenshots captured before it ended remain available as evidence.",
+      };
+  }
+};
+
+export const BrowserPreviewLiveView = ({
+  session,
+  toolName,
+  fallbackScreenshot,
+}: BrowserPreviewLiveViewProps) => {
+  const [disconnectedUrl, setDisconnectedUrl] = useState<string | null>(null);
+  const disconnected =
+    session.liveViewUrl !== null && disconnectedUrl === session.liveViewUrl;
+  const isLive =
+    session.status === "running" &&
+    session.liveViewUrl !== null &&
+    !disconnected;
+  const copy = getBrowserSessionCopy(session, disconnected, toolName);
+
+  useEffect(() => {
+    if (!session.liveViewUrl) return;
+
+    let liveViewOrigin: string;
+    try {
+      liveViewOrigin = new URL(session.liveViewUrl).origin;
+    } catch {
+      return;
+    }
+
+    const handleMessage = (event: MessageEvent<unknown>) => {
+      if (
+        event.origin === liveViewOrigin &&
+        event.data === "browserbase-disconnected"
+      ) {
+        setDisconnectedUrl(session.liveViewUrl);
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [session.liveViewUrl]);
+
+  return (
+    <div className="inspect-browser-frame mx-4 my-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-foreground/15 bg-card shadow-[0_16px_44px_-24px_oklch(0.22_0.02_260/0.38)] sm:mx-5 sm:my-5">
+      <div className="border-b border-border bg-muted/75 px-3 py-3 sm:px-4">
+        <div className="flex min-h-11 items-center gap-3 rounded-lg border border-border/90 bg-card px-4 shadow-xs">
+          <LockKeyhole
+            className="size-4 shrink-0 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <p className="min-w-0 flex-1 truncate font-mono text-muted-foreground">
+            {session.targetUrl}
+          </p>
+          {isLive && (
+            <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-600/25 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+              <Eye className="size-3.5" aria-hidden="true" />
+              Live · View only
+            </span>
+          )}
+        </div>
+      </div>
+
+      {isLive ? (
+        <div className="inspect-browser relative min-h-[31rem] flex-1 overflow-hidden bg-black">
+          <iframe
+            key={session.liveViewUrl}
+            src={session.liveViewUrl ?? undefined}
+            title="View-only Browserbase Live View"
+            sandbox="allow-same-origin allow-scripts"
+            referrerPolicy="no-referrer"
+            tabIndex={-1}
+            className="pointer-events-none absolute inset-0 size-full border-0"
+          />
+          <p className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-white/15 bg-black/70 px-3 py-1.5 text-xs font-medium text-white shadow-lg backdrop-blur-sm">
+            Viewing the same isolated browser used for verification
+          </p>
+        </div>
+      ) : (
+        <div
+          className="inspect-browser relative flex min-h-[31rem] flex-1 items-center justify-center overflow-hidden bg-card bg-contain bg-center bg-no-repeat p-8"
+          style={
+            fallbackScreenshot
+              ? {
+                  backgroundImage: `url('${fallbackScreenshot.dataUrl}')`,
+                }
+              : undefined
+          }
+          aria-label={fallbackScreenshot?.label}
+        >
+          {fallbackScreenshot && (
+            <div className="absolute inset-0 bg-card/80 backdrop-blur-[1px]" />
+          )}
+          <div
+            className="relative max-w-md rounded-2xl border border-border/80 bg-card/90 p-7 text-center shadow-xl backdrop-blur-sm"
+            aria-live="polite"
+          >
+            {session.status === "creating" ? (
+              <Spinner className="mx-auto size-7 text-primary" />
+            ) : (
+              <WifiOff
+                className="mx-auto size-7 text-muted-foreground"
+                aria-hidden="true"
+              />
+            )}
+            <h2 className="mt-5 font-sans text-2xl font-semibold">
+              {copy.title}
+            </h2>
+            <p className="mt-3 leading-7 text-muted-foreground">
+              {copy.description}
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 type BrowserPreviewLocalPlaceholderProps = {
   toolName?: string;
   verificationStatus?: ToolVerificationStatus;
@@ -128,8 +312,8 @@ const getLocalBrowserPreviewCopy = (
 
   if (verificationStatus === "running") {
     return {
-      title: "Verification is running",
-      description: `ToolTruth is checking ${selectedToolLabel} in the retained local browser and collecting its evidence.`,
+      title: "Preparing the browser view",
+      description: `ToolTruth is checking ${selectedToolLabel} in an isolated browser and collecting its evidence. A live view appears here for Browserbase sessions.`,
     };
   }
 

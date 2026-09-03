@@ -101,7 +101,7 @@ type BrowserSnapshot = Omit<
   sessionStorage: Record<string, SafeValue>;
   inputs: Record<string, SafeValue & { checked?: boolean }>;
   cookies: Record<string, SafeValue>;
-  screenshot: SafeValue;
+  screenshot: SafeValue & { dataUrl: string };
   network: ObservedNetworkEntry[];
   runtimeErrors: ObservedRuntimeError[];
 };
@@ -470,7 +470,10 @@ const captureSnapshot = async (
         hashValue(cookie.value),
       ]),
     ),
-    screenshot: hashValue(screenshot),
+    screenshot: {
+      ...hashValue(screenshot),
+      dataUrl: `data:image/png;base64,${Buffer.from(screenshot).toString("base64")}`,
+    },
     network: observedEvidence.network,
     runtimeErrors: observedEvidence.runtimeErrors,
   } satisfies BrowserSnapshot;
@@ -675,6 +678,10 @@ export const runToolVerification = async ({
 
       const evidence: ExecutionEvidenceData = {
         runLabel: `Probe ${probeId.slice(0, 12)} · ${tool.name}`,
+        screenshots: [
+          { label: "Before tool invocation", dataUrl: before.screenshot.dataUrl },
+          { label: "After tool invocation", dataUrl: after.screenshot.dataUrl },
+        ],
         timeline,
         stateChanges,
         network,

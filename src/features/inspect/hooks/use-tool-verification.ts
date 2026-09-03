@@ -8,6 +8,7 @@ import type {
   ToolVerificationStatus,
 } from "@/features/inspect/components/inspection-data";
 import type {
+  BrowserSessionView,
   SectionProgress,
   VerificationStreamEvent,
 } from "@/features/inspect/components/inspection-stream";
@@ -16,6 +17,7 @@ export type ToolVerificationRecord = {
   attempt: number;
   status: ToolVerificationStatus;
   error: string | null;
+  browserSession: BrowserSessionView | null;
   evidenceData: ExecutionEvidenceData | null;
   analysisData: ContractAnalysisData | null;
   evidenceProgress: SectionProgress;
@@ -43,6 +45,7 @@ const createInitialRecord = (attempt = 0): ToolVerificationRecord => ({
   attempt,
   status: "idle",
   error: null,
+  browserSession: null,
   evidenceData: null,
   analysisData: null,
   evidenceProgress: {
@@ -124,6 +127,8 @@ const reduceVerification = (
         return event.section === "evidence"
           ? { ...record, evidenceProgress: event.progress }
           : { ...record, analysisProgress: event.progress };
+      case "browser.session.updated":
+        return { ...record, browserSession: event.data };
       case "evidence.ready":
         return { ...record, evidenceData: event.data };
       case "analysis.ready":

@@ -8,6 +8,7 @@ import {
   createBrowserEvidenceObserver,
   type BrowserEvidenceObserver,
 } from "@/features/inspect/server/browser-evidence-observer";
+import type { BrowserSessionView } from "@/features/inspect/components/inspection-stream";
 import { createInspectionBrowser } from "@/features/inspect/server/stagehand-browser";
 import type { InspectionBrowserStartupReporter } from "@/features/inspect/server/stagehand-browser-shared";
 
@@ -47,8 +48,21 @@ export type BrowserbaseSessionLifecycle = {
   createdAt: number;
   expiresAt: number;
   debugUrl: string | null;
+  liveViewUrl: string | null;
   terminationReason: BrowserbaseSessionTerminationReason | null;
   endedAt: number | null;
+};
+
+export const toBrowserSessionView = (
+  lifecycle: BrowserbaseSessionLifecycle,
+  targetUrl: string,
+): BrowserSessionView => {
+  return {
+    targetUrl,
+    status: lifecycle.status,
+    liveViewUrl: lifecycle.liveViewUrl,
+    endedAt: lifecycle.endedAt,
+  };
 };
 
 export type BrowserbaseSessionLifecycleReporter = (
@@ -90,6 +104,7 @@ export const openInspectionBrowserSession = async (
     browserbaseSessionTimeoutMs,
     initialize,
     closeEnvironment,
+    requestBrowserbaseLiveViewUrl,
     releaseBrowserbaseSession,
   } = await createInspectionBrowser(
     targetHostname,
@@ -117,6 +132,7 @@ export const openInspectionBrowserSession = async (
       createdAt,
       expiresAt: createdAt + (browserbaseSessionTimeoutMs ?? 0),
       debugUrl: null,
+      liveViewUrl: null,
       terminationReason: null,
       endedAt: null,
     };
@@ -190,10 +206,23 @@ export const openInspectionBrowserSession = async (
   }
 
   if (browserbaseSessionId) {
+    let liveViewUrl: string | null = null;
+    if (requestBrowserbaseLiveViewUrl) {
+      try {
+        liveViewUrl = await requestBrowserbaseLiveViewUrl(browserbaseSessionId);
+      } catch (error) {
+        console.warn("ToolTruth Browserbase Live View could not be loaded", {
+          sessionId: browserbaseSessionId,
+          error,
+        });
+      }
+    }
+
     updateBrowserbaseLifecycle({
       sessionId: browserbaseSessionId,
       status: "running",
       debugUrl: browser.browserbaseDebugURL ?? null,
+      liveViewUrl,
     });
     console.info("ToolTruth Browserbase session opened", {
       sessionId: browserbaseSessionId,
@@ -279,7 +308,7 @@ export const openInspectionBrowserSession = async (
       browserbaseExpiration = undefined;
     }
 
-    updateBrowserbaseLifecycle({ status: "closing" });
+    updateBrowserbaseLifecycle({ status: "closing", liveViewUrl: null });
     closePromise = (async () => {
       await operationTail.catch(() => undefined);
       logReporters.clear();

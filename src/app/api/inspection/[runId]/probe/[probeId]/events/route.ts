@@ -2,6 +2,7 @@ import type { VerificationStreamEvent } from "@/features/inspect/components/insp
 import {
   InspectionBrowserSessionUnavailableError,
   openInspectionBrowserSession,
+  toBrowserSessionView,
 } from "@/features/inspect/server/inspection-browser-session";
 import {
   cancelInspectionProbe,
@@ -118,7 +119,13 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
                       ),
                     },
                   }),
-                reportLifecycle,
+                (lifecycle) => {
+                  reportLifecycle(lifecycle);
+                  publishInspectionProbeEvent(probe, {
+                    kind: "browser.session.updated",
+                    data: toBrowserSessionView(lifecycle, run.targetUrl),
+                  });
+                },
               ),
           );
 

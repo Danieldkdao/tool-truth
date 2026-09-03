@@ -16,6 +16,22 @@ export type SectionProgress = {
   message: string;
 };
 
+export type BrowserSessionViewStatus =
+  | "creating"
+  | "running"
+  | "closing"
+  | "completed"
+  | "failed"
+  | "canceled"
+  | "timed_out";
+
+export type BrowserSessionView = {
+  targetUrl: string;
+  status: BrowserSessionViewStatus;
+  liveViewUrl: string | null;
+  endedAt: number | null;
+};
+
 export type InspectionStreamEvent =
   | {
       kind: "run.connected";
@@ -43,6 +59,10 @@ export type InspectionStreamEvent =
       data: BrowserPreviewData;
     }
   | {
+      kind: "browser.session.updated";
+      data: BrowserSessionView;
+    }
+  | {
       kind: "evidence.ready";
       data: ExecutionEvidenceData;
     }
@@ -64,6 +84,10 @@ export type VerificationStreamEvent =
       kind: "section.progress";
       section: "evidence" | "analysis";
       progress: SectionProgress;
+    }
+  | {
+      kind: "browser.session.updated";
+      data: BrowserSessionView;
     }
   | {
       kind: "evidence.ready";

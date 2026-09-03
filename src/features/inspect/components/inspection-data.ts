@@ -60,8 +60,14 @@ export type EvidenceLogEntry = {
   message: string;
 };
 
+export type EvidenceScreenshot = {
+  label: string;
+  dataUrl: string;
+};
+
 export type ExecutionEvidenceData = {
   runLabel: string;
+  screenshots?: EvidenceScreenshot[];
   timeline: TimelineEntry[];
   stateChanges: StateChange[];
   network: NetworkEntry[];

@@ -24,6 +24,7 @@ export type InspectionSessionSnapshot = {
   runId: string;
   tools: DetectedTool[] | null;
   browserData: InspectionRunStreamState["browserData"];
+  browserSession: InspectionRunStreamState["browserSession"];
   evidenceData: InspectionRunStreamState["evidenceData"];
   analysisData: InspectionRunStreamState["analysisData"];
   selectedToolId: string | null;
@@ -127,6 +128,7 @@ export const useInspectionSessionController = (
       runId,
       tools: run.tools,
       browserData: run.browserData,
+      browserSession: run.browserSession,
       evidenceData: run.evidenceData,
       analysisData: run.analysisData,
       selectedToolId: resolvedToolId,
@@ -148,6 +150,7 @@ export const useInspectionSessionController = (
       resolvedToolId,
       run.analysisData,
       run.browserData,
+      run.browserSession,
       run.evidenceData,
       run.progress,
       run.runError,

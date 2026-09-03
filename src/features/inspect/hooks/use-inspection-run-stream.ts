@@ -9,6 +9,7 @@ import type {
   ExecutionEvidenceData,
 } from "@/features/inspect/components/inspection-data";
 import type {
+  BrowserSessionView,
   InspectionSection,
   InspectionStreamEvent,
   SectionProgress,
@@ -17,6 +18,7 @@ import type {
 type InspectionRunStreamState = {
   tools: DetectedTool[] | null;
   browserData: BrowserPreviewData | null;
+  browserSession: BrowserSessionView | null;
   evidenceData: ExecutionEvidenceData | null;
   analysisData: ContractAnalysisData | null;
   toolDiscoveryError: string | null;
@@ -45,6 +47,7 @@ const createInitialState = (): InspectionRunStreamState => {
   return {
     tools: null,
     browserData: null,
+    browserSession: null,
     evidenceData: null,
     analysisData: null,
     toolDiscoveryError: null,
@@ -137,6 +140,11 @@ const reduceInspectionRunStream = (
       return {
         ...state,
         browserData: event.data,
+      };
+    case "browser.session.updated":
+      return {
+        ...state,
+        browserSession: event.data,
       };
     case "evidence.ready":
       return {

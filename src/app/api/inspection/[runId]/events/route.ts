@@ -7,7 +7,10 @@ import {
   getOrCreateInspectionBrowserSession,
   getOrCreateToolDiscovery,
 } from "@/features/inspect/server/inspection-run-store";
-import { openInspectionBrowserSession } from "@/features/inspect/server/inspection-browser-session";
+import {
+  openInspectionBrowserSession,
+  toBrowserSessionView,
+} from "@/features/inspect/server/inspection-browser-session";
 import type { ParamsId } from "@/lib/types";
 
 const encodeEvent = (
@@ -50,11 +53,22 @@ export const GET = async (
         eventId += 1;
         controller.enqueue(encodeEvent(encoder, eventId, event));
       };
+      const sendLatestBrowserSession = () => {
+        const lifecycle =
+          run.browserbaseSessions[run.browserbaseSessions.length - 1];
+        if (!lifecycle) return;
+
+        send({
+          kind: "browser.session.updated",
+          data: toBrowserSessionView(lifecycle, run.targetUrl),
+        });
+      };
 
       controller.enqueue(
         encoder.encode("retry: 1500\n: inspection stream ready\n\n"),
       );
       send({ kind: "run.connected", runId });
+      sendLatestBrowserSession();
       send({
         kind: "section.progress",
         section: "tools",
@@ -73,7 +87,13 @@ export const GET = async (
               (progress) => {
                 send({ kind: "section.progress", section: "tools", progress });
               },
-              reportLifecycle,
+              (lifecycle) => {
+                reportLifecycle(lifecycle);
+                send({
+                  kind: "browser.session.updated",
+                  data: toBrowserSessionView(lifecycle, run.targetUrl),
+                });
+              },
             ),
         );
 
@@ -118,6 +138,7 @@ export const GET = async (
           });
         })
         .finally(() => {
+          sendLatestBrowserSession();
           send({ kind: "run.completed" });
           close();
         });

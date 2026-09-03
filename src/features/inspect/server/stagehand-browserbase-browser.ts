@@ -14,7 +14,12 @@ import {
 const BROWSERBASE_SESSION_CREATE_TIMEOUT_MS = 30_000;
 const BROWSERBASE_INITIALIZATION_TIMEOUT_MS = 45_000;
 const BROWSERBASE_SESSION_TIMEOUT_SECONDS = 5 * 60;
+const BROWSERBASE_LIVE_VIEW_TIMEOUT_MS = 10_000;
 const BROWSERBASE_SESSION_RELEASE_TIMEOUT_MS = 10_000;
+
+type BrowserbaseLiveViewResponse = {
+  debuggerFullscreenUrl?: unknown;
+};
 
 const withDeadline = async <T>(
   operation: Promise<T>,
@@ -81,6 +86,48 @@ const toBrowserbaseStartupError = (error: unknown) => {
     "Browserbase could not start the inspection browser. Verify the credentials, project, quota, and service availability, then try again.",
     { cause: error },
   );
+};
+
+const requestBrowserbaseLiveViewUrl = async (
+  sessionId: string,
+  apiKey: string,
+) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    BROWSERBASE_LIVE_VIEW_TIMEOUT_MS,
+  );
+  timeout.unref?.();
+
+  try {
+    const response = await fetch(
+      `https://api.browserbase.com/v1/sessions/${encodeURIComponent(sessionId)}/debug`,
+      {
+        headers: { "X-BB-API-Key": apiKey },
+        signal: controller.signal,
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Browserbase Live View request returned ${response.status}.`,
+      );
+    }
+
+    const payload = (await response.json()) as BrowserbaseLiveViewResponse;
+    if (typeof payload.debuggerFullscreenUrl !== "string") {
+      throw new Error("Browserbase did not return a Live View URL.");
+    }
+
+    const liveViewUrl = new URL(payload.debuggerFullscreenUrl);
+    if (liveViewUrl.protocol !== "https:") {
+      throw new Error("Browserbase returned an insecure Live View URL.");
+    }
+
+    return liveViewUrl.toString();
+  } finally {
+    clearTimeout(timeout);
+  }
 };
 
 export const createBrowserbaseInspectionBrowser = (
@@ -162,6 +209,8 @@ export const createBrowserbaseInspectionBrowser = (
       }
     },
     closeEnvironment: async () => undefined,
+    requestBrowserbaseLiveViewUrl: (sessionId) =>
+      requestBrowserbaseLiveViewUrl(sessionId, apiKey),
     releaseBrowserbaseSession: async (sessionId) => {
       const controller = new AbortController();
       const timeout = setTimeout(

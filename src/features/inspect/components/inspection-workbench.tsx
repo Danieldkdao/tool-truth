@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/resizable";
 
 import {
+  BrowserPreviewLiveView,
   BrowserPreviewLocalPlaceholder,
   BrowserPreviewSectionProgress,
   BrowserPreviewSectionSkeleton,
@@ -161,6 +162,7 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
   const session = useInspectionSessionController(runId);
   const {
     tools,
+    browserSession,
     selectedToolId,
     selectedTool,
     activeEvidenceTab,
@@ -231,7 +233,21 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
     <DetectedToolsSectionProgress progress={progress.tools} />
   );
 
-  const browserPanel = tools ? (
+  const activeBrowserSession =
+    selectedVerification?.status === "running"
+      ? selectedVerification.browserSession
+      : (selectedVerification?.browserSession ?? browserSession);
+  const browserPanel = activeBrowserSession ? (
+    <BrowserPreviewLiveView
+      session={activeBrowserSession}
+      toolName={selectedTool?.name}
+      fallbackScreenshot={
+        selectedVerification?.evidenceData?.screenshots?.[
+          selectedVerification.evidenceData.screenshots.length - 1
+        ]
+      }
+    />
+  ) : tools ? (
     <BrowserPreviewLocalPlaceholder
       toolName={selectedTool?.name}
       verificationStatus={selectedVerification?.status}
