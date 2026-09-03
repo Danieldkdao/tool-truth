@@ -33,6 +33,14 @@ The submitted target hostname must appear in `BROWSERBASE_ALLOWED_DOMAINS`.
 Browserbase blocks HTTP and HTTPS requests to domains outside that list, so include
 any trusted asset or API domains that the smoke-test application requires.
 
+ToolTruth can also reject its own public hostnames so it cannot recursively inspect
+its workbench tools. Configure a comma-separated list of hostnames without schemes,
+ports, or paths:
+
+```bash
+TOOLTRUTH_BLOCKED_HOSTNAMES=tooltruth.example.com,www.tooltruth.example.com
+```
+
 Browserbase discovery and verification sessions are disposable. Discovery closes
 its session as soon as the tool contracts are captured, and verification closes
 its session as soon as the runtime evidence is captured, before contract analysis.

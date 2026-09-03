@@ -36,6 +36,7 @@ export const createLocalInspectionBrowser = async (
 
     return {
       browser,
+      provider: "local",
       initialize: async (reportStartup) => {
         reportStartup({ value: 20, message: "Starting the local browser" });
         await browser.init();

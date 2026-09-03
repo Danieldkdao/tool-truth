@@ -17,8 +17,11 @@ export type InspectionBrowserStartupReporter = (
 
 export type InspectionBrowserHandle = {
   browser: Stagehand;
+  provider: "local" | "browserbase";
+  browserbaseSessionTimeoutMs?: number;
   initialize: (reportStartup: InspectionBrowserStartupReporter) => Promise<void>;
   closeEnvironment: () => Promise<void>;
+  releaseBrowserbaseSession?: (sessionId: string) => Promise<void>;
 };
 
 export class InspectionBrowserStartupError extends Error {

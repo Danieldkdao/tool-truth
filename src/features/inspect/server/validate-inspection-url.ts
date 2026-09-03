@@ -3,6 +3,8 @@ import "server-only";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
+import { serverEnv } from "@/data/env/server";
+
 const BLOCKED_HOSTNAME_SUFFIXES = [
   ".home.arpa",
   ".internal",
@@ -176,13 +178,28 @@ const isPublicIp = (address: string) => {
 
 const normalizeHostname = (hostname: string) => {
   return hostname
+    .trim()
     .replace(/^\[/, "")
     .replace(/\]$/, "")
     .replace(/\.$/, "")
     .toLowerCase();
 };
 
+const getConfiguredBlockedHostnames = () => {
+  return new Set(
+    serverEnv.TOOLTRUTH_BLOCKED_HOSTNAMES?.split(",")
+      .map(normalizeHostname)
+      .filter(Boolean) ?? [],
+  );
+};
+
 const assertAllowedHostname = (hostname: string) => {
+  if (getConfiguredBlockedHostnames().has(hostname)) {
+    throw new UnsafeInspectionUrlError(
+      "ToolTruth cannot inspect its own application. Submit a different WebMCP application URL.",
+    );
+  }
+
   if (
     BLOCKED_HOSTNAMES.has(hostname) ||
     BLOCKED_HOSTNAME_SUFFIXES.some((suffix) => hostname.endsWith(suffix))

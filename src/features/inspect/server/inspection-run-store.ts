@@ -4,7 +4,12 @@ import { randomBytes } from "node:crypto";
 
 import type { DetectedTool } from "@/features/inspect/components/inspection-data";
 import type { VerificationStreamEvent } from "@/features/inspect/components/inspection-stream";
-import type { InspectionBrowserSession } from "@/features/inspect/server/inspection-browser-session";
+import type {
+  BrowserbaseSessionLifecycle,
+  BrowserbaseSessionLifecycleReporter,
+  BrowserbaseSessionTerminationReason,
+  InspectionBrowserSession,
+} from "@/features/inspect/server/inspection-browser-session";
 import type { ValidatedInspectionTarget } from "@/features/inspect/server/validate-inspection-url";
 
 const RUN_TTL_MS = 60 * 60 * 1000;
@@ -33,6 +38,7 @@ export type InspectionRun = {
   resolvedAddresses: string[];
   createdAt: number;
   expiresAt: number;
+  browserbaseSessions: BrowserbaseSessionLifecycle[];
   browserSession?: Promise<InspectionBrowserSession>;
   browserSessionExpiration?: NodeJS.Timeout;
   toolDiscovery?: Promise<DetectedTool[]>;
@@ -48,9 +54,28 @@ const inspectionRuns =
 
 globalForInspectionRuns.toolTruthInspectionRuns = inspectionRuns;
 
+const createBrowserbaseLifecycleReporter = (
+  run: InspectionRun,
+): BrowserbaseSessionLifecycleReporter => {
+  return (lifecycle) => {
+    run.browserbaseSessions ??= [];
+    const index = run.browserbaseSessions.findIndex(
+      (session) => session.lifecycleId === lifecycle.lifecycleId,
+    );
+
+    if (index === -1) {
+      run.browserbaseSessions.push(lifecycle);
+      return;
+    }
+
+    run.browserbaseSessions[index] = lifecycle;
+  };
+};
+
 const closeRunBrowserSession = async (
   run: InspectionRun,
   expectedSession?: Promise<InspectionBrowserSession>,
+  reason: BrowserbaseSessionTerminationReason = "completed",
 ) => {
   if (expectedSession && run.browserSession !== expectedSession) return;
 
@@ -63,7 +88,7 @@ const closeRunBrowserSession = async (
   run.browserSession = undefined;
   if (session) {
     await session
-      .then((browserSession) => browserSession.close())
+      .then((browserSession) => browserSession.close(reason))
       .catch(() => undefined);
   }
 };
@@ -71,6 +96,7 @@ const closeRunBrowserSession = async (
 const closeProbeBrowserSession = async (
   probe: InspectionProbe,
   expectedSession?: Promise<InspectionBrowserSession>,
+  reason: BrowserbaseSessionTerminationReason = "completed",
 ) => {
   if (expectedSession && probe.browserSession !== expectedSession) return;
 
@@ -78,7 +104,7 @@ const closeProbeBrowserSession = async (
   probe.browserSession = undefined;
   if (session) {
     await session
-      .then((browserSession) => browserSession.close())
+      .then((browserSession) => browserSession.close(reason))
       .catch(() => undefined);
   }
 };
@@ -91,9 +117,9 @@ const deleteInspectionRun = (runId: string, run: InspectionRun) => {
   inspectionRuns.delete(runId);
   for (const probe of run.probes.values()) {
     cancelInspectionProbe(probe);
-    void closeProbeBrowserSession(probe);
+    void closeProbeBrowserSession(probe, undefined, "run_expired");
   }
-  void closeRunBrowserSession(run);
+  void closeRunBrowserSession(run, undefined, "run_expired");
 };
 
 const deleteExpiredRuns = (now = Date.now()) => {
@@ -130,6 +156,7 @@ export const createInspectionRun = (target: ValidatedInspectionTarget) => {
     resolvedAddresses: target.resolvedAddresses,
     createdAt: now,
     expiresAt: now + RUN_TTL_MS,
+    browserbaseSessions: [],
     probes: new Map(),
   };
 
@@ -155,10 +182,12 @@ export const getInspectionRun = (runId: string) => {
 
 export const getOrCreateInspectionBrowserSession = (
   run: InspectionRun,
-  create: () => Promise<InspectionBrowserSession>,
+  create: (
+    reportLifecycle: BrowserbaseSessionLifecycleReporter,
+  ) => Promise<InspectionBrowserSession>,
 ) => {
   if (!run.browserSession) {
-    run.browserSession = create();
+    run.browserSession = create(createBrowserbaseLifecycleReporter(run));
     const expirationDelay = Math.max(0, run.expiresAt - Date.now());
     run.browserSessionExpiration = setTimeout(() => {
       if (inspectionRuns.get(run.id) === run) deleteInspectionRun(run.id, run);
@@ -172,23 +201,28 @@ export const getOrCreateInspectionBrowserSession = (
 export const disposeInspectionBrowserSession = (
   run: InspectionRun,
   expectedSession?: Promise<InspectionBrowserSession>,
+  reason: BrowserbaseSessionTerminationReason = "completed",
 ) => {
-  return closeRunBrowserSession(run, expectedSession);
+  return closeRunBrowserSession(run, expectedSession, reason);
 };
 
 export const getOrCreateInspectionProbeBrowserSession = (
+  run: InspectionRun,
   probe: InspectionProbe,
-  create: () => Promise<InspectionBrowserSession>,
+  create: (
+    reportLifecycle: BrowserbaseSessionLifecycleReporter,
+  ) => Promise<InspectionBrowserSession>,
 ) => {
-  probe.browserSession ??= create();
+  probe.browserSession ??= create(createBrowserbaseLifecycleReporter(run));
   return probe.browserSession;
 };
 
 export const disposeInspectionProbeBrowserSession = (
   probe: InspectionProbe,
   expectedSession?: Promise<InspectionBrowserSession>,
+  reason: BrowserbaseSessionTerminationReason = "completed",
 ) => {
-  return closeProbeBrowserSession(probe, expectedSession);
+  return closeProbeBrowserSession(probe, expectedSession, reason);
 };
 
 export const getOrCreateToolDiscovery = (
@@ -208,7 +242,7 @@ export const createInspectionProbe = (run: InspectionRun, toolId: string) => {
       const oldestProbe = run.probes.get(oldestProbeId);
       if (oldestProbe) {
         cancelInspectionProbe(oldestProbe);
-        void closeProbeBrowserSession(oldestProbe);
+        void closeProbeBrowserSession(oldestProbe, undefined, "replaced");
       }
       run.probes.delete(oldestProbeId);
     }

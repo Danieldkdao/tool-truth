@@ -67,14 +67,17 @@ export const GET = async (
       void getOrCreateToolDiscovery(run, async () => {
         const browserSession = getOrCreateInspectionBrowserSession(
           run,
-          () =>
+          (reportLifecycle) =>
             openInspectionBrowserSession(
               run.targetHostname,
               (progress) => {
                 send({ kind: "section.progress", section: "tools", progress });
               },
+              reportLifecycle,
             ),
         );
+
+        let failed = false;
 
         try {
           return await discoverWebMcpTools(
@@ -84,8 +87,15 @@ export const GET = async (
             },
             await browserSession,
           );
+        } catch (error) {
+          failed = true;
+          throw error;
         } finally {
-          await disposeInspectionBrowserSession(run, browserSession);
+          await disposeInspectionBrowserSession(
+            run,
+            browserSession,
+            failed ? "failed" : "completed",
+          );
         }
       })
         .then(async (tools) => {

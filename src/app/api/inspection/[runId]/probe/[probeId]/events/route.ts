@@ -37,6 +37,10 @@ const isAbortError = (error: unknown) => {
   return error instanceof DOMException && error.name === "AbortError";
 };
 
+const isTimeoutError = (error: unknown) => {
+  return error instanceof Error && /timed?\s*out|timeout/i.test(error.message);
+};
+
 export const GET = async (request: Request, { params }: ProbeParams) => {
   const { runId, probeId } = await params;
   const run = getInspectionRun(runId);
@@ -97,8 +101,9 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
       void getOrStartInspectionProbe(probe, async (signal) => {
         const runWithDisposableBrowser = async () => {
           const browserSession = getOrCreateInspectionProbeBrowserSession(
+            run,
             probe,
-            () =>
+            (reportLifecycle) =>
               openInspectionBrowserSession(
                 run.targetHostname,
                 (progress) =>
@@ -113,8 +118,15 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
                       ),
                     },
                   }),
+                reportLifecycle,
               ),
           );
+
+          let terminationReason:
+            | "completed"
+            | "failed"
+            | "canceled"
+            | "timed_out" = "completed";
 
           try {
             await runToolVerification({
@@ -128,8 +140,19 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
               signal,
               report: (event) => publishInspectionProbeEvent(probe, event),
             });
+          } catch (error) {
+            terminationReason = signal.aborted
+              ? "canceled"
+              : isTimeoutError(error)
+                ? "timed_out"
+                : "failed";
+            throw error;
           } finally {
-            await disposeInspectionProbeBrowserSession(probe, browserSession);
+            await disposeInspectionProbeBrowserSession(
+              probe,
+              browserSession,
+              terminationReason,
+            );
           }
         };
 

@@ -14,6 +14,7 @@ import {
 const BROWSERBASE_SESSION_CREATE_TIMEOUT_MS = 30_000;
 const BROWSERBASE_INITIALIZATION_TIMEOUT_MS = 45_000;
 const BROWSERBASE_SESSION_TIMEOUT_SECONDS = 5 * 60;
+const BROWSERBASE_SESSION_RELEASE_TIMEOUT_MS = 10_000;
 
 const withDeadline = async <T>(
   operation: Promise<T>,
@@ -86,14 +87,17 @@ export const createBrowserbaseInspectionBrowser = (
   reportLog: StagehandLogReporter,
   allowedDomains: string[],
 ): InspectionBrowserHandle => {
-  if (!serverEnv.BROWSERBASE_API_KEY) {
+  const apiKey = serverEnv.BROWSERBASE_API_KEY;
+  const projectId = serverEnv.BROWSERBASE_PROJECT_ID;
+
+  if (!apiKey) {
     throw new InspectionBrowserStartupError(
       "BROWSERBASE_API_KEY is not configured.",
       "Browserbase is selected, but BROWSERBASE_API_KEY is not configured.",
     );
   }
 
-  if (!serverEnv.BROWSERBASE_PROJECT_ID) {
+  if (!projectId) {
     throw new InspectionBrowserStartupError(
       "BROWSERBASE_PROJECT_ID is not configured.",
       "Browserbase is selected, but BROWSERBASE_PROJECT_ID is not configured.",
@@ -107,8 +111,8 @@ export const createBrowserbaseInspectionBrowser = (
   const browser = new Stagehand({
     ...createSharedStagehandOptions(reportLog),
     env: "BROWSERBASE",
-    apiKey: serverEnv.BROWSERBASE_API_KEY,
-    projectId: serverEnv.BROWSERBASE_PROJECT_ID,
+    apiKey,
+    projectId,
     keepAlive: false,
     browserbaseSessionCreateParams: {
       timeout: BROWSERBASE_SESSION_TIMEOUT_SECONDS,
@@ -125,6 +129,8 @@ export const createBrowserbaseInspectionBrowser = (
 
   return {
     browser,
+    provider: "browserbase",
+    browserbaseSessionTimeoutMs: BROWSERBASE_SESSION_TIMEOUT_SECONDS * 1_000,
     initialize: async (reportStartup) => {
       reportStartup({
         value: 20,
@@ -156,5 +162,39 @@ export const createBrowserbaseInspectionBrowser = (
       }
     },
     closeEnvironment: async () => undefined,
+    releaseBrowserbaseSession: async (sessionId) => {
+      const controller = new AbortController();
+      const timeout = setTimeout(
+        () => controller.abort(),
+        BROWSERBASE_SESSION_RELEASE_TIMEOUT_MS,
+      );
+      timeout.unref?.();
+
+      try {
+        const response = await fetch(
+          `https://api.browserbase.com/v1/sessions/${encodeURIComponent(sessionId)}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-BB-API-Key": apiKey,
+            },
+            body: JSON.stringify({
+              projectId,
+              status: "REQUEST_RELEASE",
+            }),
+            signal: controller.signal,
+          },
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            `Browserbase session release returned ${response.status}.`,
+          );
+        }
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
   };
 };
