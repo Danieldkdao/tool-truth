@@ -5,10 +5,15 @@ import { z } from "zod";
 
 import type {
   ContractAnalysisData,
+  DeterministicFact,
   DetectedTool,
   Finding,
-  StateChange,
 } from "@/features/inspect/components/inspection-data";
+import {
+  evaluateSemanticConsensus,
+  serializeUntrustedEvidence,
+  type SemanticAnalysisInput,
+} from "@/features/inspect/server/semantic-evaluation";
 import {
   getToolTruthAnalysisModel,
   TOOLTRUTH_ANALYSIS_MODEL_ID,
@@ -47,17 +52,7 @@ const parseJsonResponse = <T>(text: string, schema: z.ZodType<T>) => {
   return schema.parse(JSON.parse(withoutFence.slice(start, end + 1)));
 };
 
-type AnalysisInput = {
-  tool: DetectedTool;
-  toolInput: Record<string, unknown>;
-  toolOutput: unknown;
-  invocationStatus: "Completed" | "Canceled" | "Error";
-  invocationError?: string;
-  stateChanges: StateChange[];
-  mutatingRequests: string[];
-  consoleErrors: string[];
-  sandboxLabel: string;
-};
+type AnalysisInput = SemanticAnalysisInput & { sandboxLabel: string };
 
 type AiActivityReporter = (message: string) => void;
 
@@ -202,6 +197,14 @@ const synthesizeInput = (schema: Record<string, unknown> | undefined) => {
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+};
+
+const toolAcceptsNoInput = (tool: DetectedTool) => {
+  const schema = parseInputSchema(tool.inputSchema);
+  if (!schema) return false;
+
+  const properties = isRecord(schema.properties) ? schema.properties : {};
+  return Object.keys(properties).length === 0;
 };
 
 const futureIsoDate = (daysFromNow: number) => {
@@ -397,7 +400,8 @@ const createFallbackFinding = (
     declared: input.tool.description || "No tool description was provided.",
     observed:
       input.invocationStatus !== "Completed"
-        ? input.invocationError || `Invocation ended with ${input.invocationStatus}.`
+        ? input.invocationError ||
+          `Invocation ended with ${input.invocationStatus}, but the browser API did not provide an error message.`
         : verdict === "error" && input.toolOutput !== undefined
           ? formatInputValue(input.toolOutput)
         : mutationSummary.length > 0
@@ -423,20 +427,121 @@ export const analyzeToolVerification = async (
   );
   const mutationCount =
     consequentialStateChanges.length + input.mutatingRequests.length;
-  const verdict: ContractAnalysisData["verdict"] =
+  const hardVerdict: ContractAnalysisData["deterministic"]["hardVerdict"] =
     input.invocationStatus !== "Completed"
       ? "error"
       : indicatesReadOnlyBehavior(input.tool) && mutationCount > 0
         ? "failed"
-        : "passed";
+        : null;
+  const deterministicFacts: DeterministicFact[] = [
+    {
+      id: "invocation",
+      statement: `The tool invocation ended with status ${input.invocationStatus}.`,
+    },
+    {
+      id: "state_summary",
+      statement: `${input.stateChanges.length} observable state changes and ${input.mutatingRequests.length} confirmed mutating requests were captured.`,
+    },
+    {
+      id: "contract_classification",
+      statement: indicatesReadOnlyBehavior(input.tool)
+        ? "The declared contract was classified as read-only."
+        : "The declared contract was not classified as read-only by the hard-rule engine.",
+    },
+  ];
+  const deterministic = { hardVerdict, facts: deterministicFacts };
+
+  if (!hardVerdict) {
+    reportActivity(
+      "No hard violation detected; requesting two independent semantic evaluations",
+    );
+    const semantic = await evaluateSemanticConsensus(
+      input,
+      reportActivity,
+      signal,
+    );
+    const completedEvaluations = semantic.evaluators.flatMap((result) =>
+      result.status === "completed" && result.evaluation
+        ? [result.evaluation]
+        : [],
+    );
+    const decisionEvaluations = semantic.adjudication
+      ? [semantic.adjudication]
+      : completedEvaluations;
+    const summaries = [
+      ...new Set(decisionEvaluations.map((evaluation) => evaluation.summary)),
+    ];
+    const verdict: ContractAnalysisData["verdict"] =
+      semantic.verdict === "not_pass" ? "failed" : semantic.verdict;
+    const fallbackFinding = createFallbackFinding(input, verdict);
+    const finding: Finding = {
+      ...fallbackFinding,
+      title:
+        verdict === "passed"
+          ? "Behavior matches the declared contract"
+          : verdict === "failed"
+            ? "Behavior does not match the declared contract"
+            : semantic.adjudication
+              ? "AI adjudication could not resolve the evidence"
+            : semantic.consensus === "disagreement"
+              ? "AI evaluators could not reach consensus"
+              : "The evidence was not sufficient for a verdict",
+      observed:
+        summaries.length > 0
+          ? summaries.join(" ")
+          : "The semantic evaluators were unavailable or did not return valid evidence-backed results.",
+      severity:
+        verdict === "failed"
+          ? "critical"
+          : verdict === "inconclusive"
+            ? "warning"
+            : "info",
+    };
+    const repairSuggestions = [
+      ...new Set(
+        decisionEvaluations.map((evaluation) => evaluation.suggestedRepair),
+      ),
+    ];
+
+    return {
+      findings: { [input.tool.id]: finding },
+      verdict,
+      unexpectedStateChanges: verdict === "failed" ? mutationCount : 0,
+      sandboxLabel: input.sandboxLabel,
+      suggestedRepair:
+        repairSuggestions.join(" ") ||
+        (semantic.consensus === "disagreement"
+          ? "Review the captured evidence and rerun the verification when conditional adjudication is available."
+          : "Review the captured evidence and rerun the verification when both semantic evaluators are available."),
+      evidenceStatus: semantic.evidenceStatus,
+      deterministic,
+      evaluators: semantic.evaluators,
+      adjudication: semantic.adjudication,
+      consensus: semantic.consensus,
+      decisionBasis:
+        semantic.adjudication
+          ? "adjudication"
+          : semantic.consensus === "agreement" && verdict !== "inconclusive"
+          ? "evaluator_consensus"
+          : "insufficient_evidence",
+    };
+  }
+
+  const verdict = hardVerdict;
   const fallbackFinding = createFallbackFinding(input, verdict);
+  const missingNoInputInvocationError =
+    verdict === "error" &&
+    toolAcceptsNoInput(input.tool) &&
+    !input.invocationError;
 
   let finding = fallbackFinding;
   let suggestedRepair =
     verdict === "failed"
       ? "Align the implementation with the declared read-only behavior, or update the contract and require confirmation before consequential changes."
       : verdict === "error"
-        ? "Inspect the invocation error and retry with valid synthetic input."
+        ? missingNoInputInvocationError
+          ? "This tool accepts no input, so different synthetic input will not help. Inspect its runtime preconditions and make the tool self-contained or declare the required setup."
+          : "Inspect the invocation error and retry with valid synthetic input."
         : "No contract repair is recommended from this run; keep the evidence as a regression fixture.";
 
   const model = getToolTruthAnalysisModel();
@@ -450,6 +555,11 @@ export const analyzeToolVerification = async (
       unexpectedStateChanges: verdict === "failed" ? mutationCount : 0,
       sandboxLabel: input.sandboxLabel,
       suggestedRepair,
+      evidenceStatus: verdict === "error" ? "partial" : "complete",
+      deterministic,
+      evaluators: [],
+      consensus: "not_required",
+      decisionBasis: "hard_evidence",
     };
   }
 
@@ -469,14 +579,14 @@ export const analyzeToolVerification = async (
         `Deterministic verdict: ${verdict}`,
         `Tool: ${input.tool.name}`,
         `Description: ${input.tool.description}`,
-        `Annotations: ${JSON.stringify(input.tool.annotations ?? {})}`,
-        `Input: ${JSON.stringify(input.toolInput)}`,
-        `Output: ${JSON.stringify(input.toolOutput)?.slice(0, 4_000) ?? "undefined"}`,
+        `Annotations: ${serializeUntrustedEvidence(input.tool.annotations ?? {})}`,
+        `Input: ${serializeUntrustedEvidence(input.toolInput)}`,
+        `Output: ${serializeUntrustedEvidence(input.toolOutput, 4_000)}`,
         `Invocation status: ${input.invocationStatus}`,
         `Invocation error: ${input.invocationError ?? "none"}`,
-        `State changes: ${JSON.stringify(input.stateChanges)}`,
-        `Mutating requests: ${JSON.stringify(input.mutatingRequests)}`,
-        `Console errors: ${JSON.stringify(input.consoleErrors.slice(0, 10))}`,
+        `State changes: ${serializeUntrustedEvidence(input.stateChanges)}`,
+        `Mutating requests: ${serializeUntrustedEvidence(input.mutatingRequests)}`,
+        `Runtime logs: ${serializeUntrustedEvidence(input.runtimeLogs.slice(0, 20))}`,
       ].join("\n"),
     });
 
@@ -487,9 +597,13 @@ export const analyzeToolVerification = async (
       ...fallbackFinding,
       title: generated.title,
       declared: generated.declared,
-      observed: generated.observed,
+      observed: missingNoInputInvocationError
+        ? fallbackFinding.observed
+        : generated.observed,
     };
-    suggestedRepair = generated.suggestedRepair;
+    suggestedRepair = missingNoInputInvocationError
+      ? suggestedRepair
+      : generated.suggestedRepair;
     reportActivity("AI evidence summary completed");
   } catch (error) {
     throwIfAborted(signal);
@@ -504,5 +618,10 @@ export const analyzeToolVerification = async (
     unexpectedStateChanges: verdict === "failed" ? mutationCount : 0,
     sandboxLabel: input.sandboxLabel,
     suggestedRepair,
+    evidenceStatus: verdict === "error" ? "partial" : "complete",
+    deterministic,
+    evaluators: [],
+    consensus: "not_required",
+    decisionBasis: "hard_evidence",
   };
 };

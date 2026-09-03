@@ -30,21 +30,25 @@ import {
   analyzeToolVerification,
   generateSafeToolInput,
 } from "@/features/inspect/server/verification-analysis";
+import type { SemanticBrowserSnapshot } from "@/features/inspect/server/semantic-evaluation";
 import type {
   InspectionBrowserSession,
   InspectionBrowserSessionContext,
 } from "@/features/inspect/server/inspection-browser-session";
+import { readStableWebMcpTools } from "@/features/inspect/server/discover-webmcp-tools";
 import { getInspectionBrowserLabel } from "@/features/inspect/server/stagehand-browser";
 import { validateInspectionUrl } from "@/features/inspect/server/validate-inspection-url";
 
 const NAVIGATION_TIMEOUT_MS = 20_000;
-const TOOL_DISCOVERY_TIMEOUT_MS = 4_000;
 const TOOL_INVOCATION_TIMEOUT_MS = 20_000;
 const MAX_LOG_ENTRIES = 250;
 const MAX_NETWORK_ENTRIES = 100;
 const MAX_TEXT_LENGTH = 20_000;
 
 const SNAPSHOT_EXPRESSION = `(() => {
+  const compactText = (element, maxLength = 240) => String(
+    element.getAttribute?.("aria-label") || element.textContent || ""
+  ).replace(/\\s+/g, " ").trim().slice(0, maxLength);
   const readStorage = (storage) => {
     const result = {};
     for (let index = 0; index < storage.length; index += 1) {
@@ -58,6 +62,25 @@ const SNAPSHOT_EXPRESSION = `(() => {
     value: "value" in element ? String(element.value ?? "").slice(0, 1000) : "",
     checked: "checked" in element ? Boolean(element.checked) : undefined,
   }));
+  const toolBindings = Array.from(document.querySelectorAll("form[toolname]")).slice(0, 30).map((form) => ({
+    name: String(form.getAttribute("toolname") || "").slice(0, 500),
+    description: String(form.getAttribute("tooldescription") || "").slice(0, 1000),
+    action: String(form.action || location.href).slice(0, 2000),
+    method: String(form.getAttribute("method") || "get").toUpperCase().slice(0, 20),
+    autosubmit: form.hasAttribute("toolautosubmit"),
+    controls: Array.from(form.elements).slice(0, 20).map((element, index) => ({
+      name: String(element.getAttribute?.("name") || element.getAttribute?.("id") || element.tagName?.toLowerCase() + "-" + index).slice(0, 200),
+      type: String(element.getAttribute?.("type") || element.tagName?.toLowerCase() || "control").slice(0, 80),
+      description: String(element.getAttribute?.("toolparamdescription") || element.getAttribute?.("aria-label") || "").slice(0, 500),
+      label: compactText(element),
+      required: Boolean(element.required),
+    })),
+  }));
+  const pageSemantics = {
+    headings: Array.from(document.querySelectorAll("h1, h2, h3, [role='heading']")).slice(0, 20).map((element) => compactText(element)).filter(Boolean),
+    actions: Array.from(document.querySelectorAll("button, a[href], [role='button']")).slice(0, 30).map((element) => compactText(element)).filter(Boolean),
+    liveMessages: Array.from(document.querySelectorAll("[aria-live], [role='alert'], [role='status']")).slice(0, 20).map((element) => compactText(element)).filter(Boolean),
+  };
   return {
     url: location.href,
     title: document.title,
@@ -65,6 +88,8 @@ const SNAPSHOT_EXPRESSION = `(() => {
     localStorage: readStorage(localStorage),
     sessionStorage: readStorage(sessionStorage),
     inputs,
+    toolBindings,
+    pageSemantics,
     dom: {
       buttons: document.querySelectorAll("button").length,
       forms: document.querySelectorAll("form").length,
@@ -82,6 +107,25 @@ type BrowserSnapshotPayload = {
   localStorage: Record<string, string>;
   sessionStorage: Record<string, string>;
   inputs: Array<{ key: string; value: string; checked?: boolean }>;
+  toolBindings: Array<{
+    name: string;
+    description: string;
+    action: string;
+    method: string;
+    autosubmit: boolean;
+    controls: Array<{
+      name: string;
+      type: string;
+      description: string;
+      label: string;
+      required: boolean;
+    }>;
+  }>;
+  pageSemantics: {
+    headings: string[];
+    actions: string[];
+    liveMessages: string[];
+  };
   dom: {
     buttons: number;
     forms: number;
@@ -493,6 +537,56 @@ const captureSnapshot = async (
   } satisfies BrowserSnapshot;
 };
 
+const toSemanticBrowserSnapshot = (
+  snapshot: BrowserSnapshot,
+  selectedToolName: string,
+): SemanticBrowserSnapshot => {
+  const toolBinding = snapshot.toolBindings.find(
+    (binding) => binding.name === selectedToolName,
+  );
+  const sanitizeList = (values: string[], maxItems: number) =>
+    values
+      .slice(0, maxItems)
+      .map((value) => sanitizeText(value, 240))
+      .filter(Boolean);
+
+  return {
+    url: safeUrlPath(snapshot.url),
+    title: sanitizeText(snapshot.title, 200),
+    visibleText: snapshot.bodyText,
+    dom: snapshot.dom,
+    pageSemantics: {
+      headings: sanitizeList(snapshot.pageSemantics.headings, 20),
+      actions: sanitizeList(snapshot.pageSemantics.actions, 30),
+      liveMessages: sanitizeList(snapshot.pageSemantics.liveMessages, 20),
+    },
+    toolBinding: toolBinding
+      ? {
+          name: sanitizeText(toolBinding.name, 500),
+          description: sanitizeText(toolBinding.description, 1_000),
+          action: safeUrlPath(toolBinding.action),
+          method: sanitizeText(toolBinding.method, 20),
+          autosubmit: toolBinding.autosubmit,
+          controls: toolBinding.controls.slice(0, 20).map((control) => ({
+            name: sanitizeText(control.name, 200),
+            type: sanitizeText(control.type, 80),
+            description: sanitizeText(control.description, 500),
+            label: sanitizeText(control.label, 240),
+            required: control.required,
+          })),
+        }
+      : null,
+    localStorage: snapshot.localStorage,
+    sessionStorage: snapshot.sessionStorage,
+    cookies: snapshot.cookies,
+    inputs: snapshot.inputs,
+    screenshot: {
+      bytes: snapshot.screenshot.bytes,
+      hash: snapshot.screenshot.hash,
+    },
+  };
+};
+
 const toBrowserbaseStatistics = (
   lifecycle: ReturnType<InspectionBrowserSession["getStatistics"]>["browserbaseLifecycle"],
 ): BrowserbaseSessionStatistics | null => {
@@ -615,9 +709,7 @@ export const runToolVerification = async ({
       const discoverTools = async () => {
         const discoveryStartedAt = Date.now();
         try {
-          return await page.listWebMCPTools({
-            timeoutMs: TOOL_DISCOVERY_TIMEOUT_MS,
-          });
+          return await readStableWebMcpTools(page);
         } finally {
           discoveryDurationMs += Date.now() - discoveryStartedAt;
         }
@@ -775,6 +867,8 @@ export const runToolVerification = async ({
 
       report({ kind: "evidence.ready", toolId: selectedTool.id, data: evidence });
       return {
+        after,
+        before,
         evidence,
         invocationDurationMs,
         observedMutations,
@@ -833,11 +927,17 @@ export const runToolVerification = async ({
         (captured.result.exception
           ? stringifyCompact(captured.result.exception)
           : undefined),
+      before: toSemanticBrowserSnapshot(captured.before, captured.tool.name),
+      after: toSemanticBrowserSnapshot(captured.after, captured.tool.name),
+      screenshots: {
+        before: captured.before.screenshot.body,
+        after: captured.after.screenshot.body,
+      },
       stateChanges: captured.stateChanges,
+      network: captured.evidence.network,
       mutatingRequests,
-      consoleErrors: logs
-        .filter((entry) => entry.level === "error")
-        .map((entry) => entry.message),
+      runtimeLogs: logs.filter((entry) => entry.source !== "ai"),
+      timeline: captured.evidence.timeline,
       sandboxLabel: getInspectionBrowserLabel(),
     },
     recordAiActivity,

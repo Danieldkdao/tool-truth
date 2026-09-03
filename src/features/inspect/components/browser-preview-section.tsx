@@ -330,6 +330,7 @@ const getLocalBrowserPreviewCopy = (
   if (
     verificationStatus === "passed" ||
     verificationStatus === "failed" ||
+    verificationStatus === "inconclusive" ||
     verificationStatus === "error"
   ) {
     return {

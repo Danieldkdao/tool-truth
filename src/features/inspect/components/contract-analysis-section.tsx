@@ -1,4 +1,4 @@
-import { Download, Play } from "lucide-react";
+import { Play } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -74,10 +74,8 @@ export const ContractAnalysisSection = ({
         : "pending";
   const hasFailed = verdict === "failed" || verdict === "error";
   const hasPassed = verdict === "passed";
-  const hasSuggestedRepair =
-    verdict === "failed" && Boolean(data?.suggestedRepair.trim());
-  const canExportEvidenceReceipt =
-    verdict === "failed" && Boolean(recordedFinding);
+  const isInconclusive = verdict === "inconclusive";
+  const isError = verdict === "error";
   const hasRun = Boolean(data || error);
 
   return (
@@ -88,6 +86,8 @@ export const ContractAnalysisSection = ({
             ? "border-destructive/20 bg-destructive/[0.055]"
             : hasPassed
               ? "border-emerald-600/20 bg-emerald-600/[0.055]"
+              : isInconclusive
+                ? "border-amber-600/20 bg-amber-600/[0.055]"
               : "border-primary/20 bg-primary/[0.045]"
         }`}
       >
@@ -101,6 +101,8 @@ export const ContractAnalysisSection = ({
               ? "border-destructive"
               : hasPassed
                 ? "border-emerald-600"
+                : isInconclusive
+                  ? "border-amber-600"
                 : "border-primary"
           }`}
         >
@@ -110,6 +112,8 @@ export const ContractAnalysisSection = ({
                 ? "text-destructive"
                 : hasPassed
                   ? "text-emerald-700 dark:text-emerald-400"
+                  : isInconclusive
+                    ? "text-amber-700 dark:text-amber-400"
                   : "text-primary"
             }`}
           >
@@ -117,8 +121,12 @@ export const ContractAnalysisSection = ({
               ? "Verification error"
               : isRunning
                 ? "Collecting runtime evidence"
+                : isError
+                  ? "Verification error"
                 : hasPassed
                   ? "Verification passed"
+                  : isInconclusive
+                    ? "Verification inconclusive"
                   : verdict === "failed"
                     ? "Verification failed"
                     : "Ready to run"}
@@ -127,10 +135,28 @@ export const ContractAnalysisSection = ({
             {error ??
               (isRunning
                 ? "The local browser is invoking the tool and comparing before-and-after state."
+                : isError
+                  ? "The tool invocation did not complete successfully, so deterministic evidence ended the verification."
                 : verdict === "failed"
-                  ? `${data?.unexpectedStateChanges ?? 0} unexpected changes were observed.`
+                  ? data?.decisionBasis === "hard_evidence"
+                    ? `${data.unexpectedStateChanges} unexpected changes were confirmed by deterministic evidence.`
+                    : data?.decisionBasis === "adjudication"
+                      ? "A conditional adjudicator resolved the evaluator disagreement and found that the observed behavior did not satisfy the declared contract."
+                      : "Both semantic evaluators found that the observed behavior did not satisfy the declared contract."
+                  : isInconclusive
+                    ? data?.decisionBasis === "adjudication"
+                      ? "The conditional adjudicator found that the available evidence could not reliably resolve the evaluator disagreement."
+                      : data?.consensus === "disagreement"
+                        ? "The two semantic evaluators disagreed and adjudication was unavailable, so ToolTruth did not force a verdict."
+                      : data?.consensus === "agreement"
+                        ? "Both semantic evaluators agreed that the available evidence was insufficient for a reliable verdict."
+                        : "Two valid semantic evaluations were not available, so ToolTruth did not force a verdict."
                   : hasPassed
-                    ? "No behavioral mismatch was observed in this run."
+                    ? data?.decisionBasis === "adjudication"
+                      ? "A conditional adjudicator resolved the evaluator disagreement and found that the evidence supports the declared behavior."
+                      : data?.decisionBasis === "evaluator_consensus"
+                      ? "Both semantic evaluators agreed that the evidence supports the declared behavior."
+                      : "No behavioral mismatch was observed in this run."
                     : "Run the selected tool in an isolated browser to test its claims.")}
           </p>
         </div>
@@ -182,6 +208,147 @@ export const ContractAnalysisSection = ({
         </div>
       </section>
 
+      {data && (
+        <section className="border-t border-border px-6 py-6">
+          <h3 className="font-sans font-semibold">Decision basis</h3>
+          <p className="mt-2 leading-7 text-muted-foreground">
+            {data.decisionBasis === "hard_evidence"
+              ? "The deterministic engine found an indisputable result, so AI could explain it but could not override it."
+              : data.decisionBasis === "evaluator_consensus"
+                ? "No hard violation was found. Two independent semantic evaluations agreed on the final verdict."
+                : data.decisionBasis === "adjudication"
+                  ? "No hard violation was found. The primary evaluators disagreed, so a conditional third model resolved the disputed claims from the original evidence."
+                  : "No hard violation was found, but the semantic evaluation layer could not establish consensus."}
+          </p>
+          <p className="mt-2 font-medium text-muted-foreground">
+            Evidence packet: {data.evidenceStatus}
+          </p>
+
+          {data.deterministic.facts.length > 0 && (
+            <ul className="mt-4 space-y-2 border-l-2 border-border pl-4 text-muted-foreground">
+              {data.deterministic.facts.map((fact) => (
+                <li key={fact.id}>{fact.statement}</li>
+              ))}
+            </ul>
+          )}
+
+          {data.evaluators.length > 0 && (
+            <div className="mt-5 space-y-3">
+              {data.evaluators.map((result) => {
+                const evaluation = result.evaluation;
+                const label =
+                  result.evaluator === "contract_checker"
+                    ? "Contract checker"
+                    : "Evidence checker";
+
+                return (
+                  <article
+                    key={result.evaluator}
+                    className="rounded-lg border border-border bg-muted/35 p-4"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h4 className="font-sans font-semibold">{label}</h4>
+                      <p className="font-medium text-muted-foreground">
+                        {evaluation
+                          ? `${evaluation.verdict.replace("_", " ")} · ${Math.round(evaluation.confidence * 100)}% confidence`
+                          : result.status}
+                      </p>
+                    </div>
+                    <p className="mt-3 leading-7 text-foreground/85">
+                      {evaluation?.summary ?? result.error}
+                    </p>
+                    {evaluation && (
+                      <details className="mt-3">
+                        <summary className="cursor-pointer font-medium text-primary">
+                          Review requirement evidence
+                        </summary>
+                        <ul className="mt-3 space-y-3 border-l-2 border-border pl-4">
+                          {evaluation.requirements.map((requirement, index) => (
+                            <li key={`${requirement.requirement}-${index}`}>
+                              <p className="font-medium">
+                                {requirement.status}: {requirement.requirement}
+                              </p>
+                              <p className="mt-1 leading-7 text-muted-foreground">
+                                {requirement.reason}
+                              </p>
+                              <p className="mt-1 break-all font-mono text-muted-foreground">
+                                Evidence: {requirement.evidenceIds.join(", ") || "none"}
+                              </p>
+                            </li>
+                          ))}
+                        </ul>
+                        {evaluation.uncertainties.length > 0 && (
+                          <div className="mt-4 border-l-2 border-amber-500/50 pl-4">
+                            <p className="font-medium text-amber-700 dark:text-amber-400">
+                              Uncertainties
+                            </p>
+                            <ul className="mt-2 space-y-2 text-muted-foreground">
+                              {evaluation.uncertainties.map(
+                                (uncertainty, index) => (
+                                  <li key={`${uncertainty}-${index}`}>
+                                    {uncertainty}
+                                  </li>
+                                ),
+                              )}
+                            </ul>
+                          </div>
+                        )}
+                      </details>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+
+          {data.adjudication && (
+            <article className="mt-5 rounded-lg border border-primary/30 bg-primary/[0.045] p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="font-sans font-semibold">Conditional adjudication</h4>
+                <p className="font-medium text-muted-foreground">
+                  {data.adjudication.verdict.replace("_", " ")} · {Math.round(data.adjudication.confidence * 100)}% confidence
+                </p>
+              </div>
+              <p className="mt-3 leading-7 text-foreground/85">
+                {data.adjudication.summary}
+              </p>
+              <details className="mt-3">
+                <summary className="cursor-pointer font-medium text-primary">
+                  Review adjudicated requirement evidence
+                </summary>
+                <ul className="mt-3 space-y-3 border-l-2 border-border pl-4">
+                  {data.adjudication.requirements.map((requirement, index) => (
+                    <li key={`${requirement.requirement}-${index}`}>
+                      <p className="font-medium">
+                        {requirement.status}: {requirement.requirement}
+                      </p>
+                      <p className="mt-1 leading-7 text-muted-foreground">
+                        {requirement.reason}
+                      </p>
+                      <p className="mt-1 break-all font-mono text-muted-foreground">
+                        Evidence: {requirement.evidenceIds.join(", ") || "none"}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+                {data.adjudication.uncertainties.length > 0 && (
+                  <div className="mt-4 border-l-2 border-amber-500/50 pl-4">
+                    <p className="font-medium text-amber-700 dark:text-amber-400">
+                      Uncertainties
+                    </p>
+                    <ul className="mt-2 space-y-2 text-muted-foreground">
+                      {data.adjudication.uncertainties.map((uncertainty, index) => (
+                        <li key={`${uncertainty}-${index}`}>{uncertainty}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </details>
+            </article>
+          )}
+        </section>
+      )}
+
       <section className="border-t border-border bg-accent/35 px-6 py-6">
         <div className="flex items-center justify-between gap-4">
           <h3 className="font-sans font-semibold">Probe configuration</h3>
@@ -209,24 +376,6 @@ export const ContractAnalysisSection = ({
           {data?.suggestedRepair ??
             "A repair recommendation will appear after the observed behavior is compared with the tool contract."}
         </p>
-        <Button
-          variant="link"
-          disabled={!hasSuggestedRepair}
-          className="mt-4 min-h-10 px-0 text-base font-semibold disabled:text-muted-foreground disabled:no-underline"
-        >
-          Review proposed change
-        </Button>
-      </section>
-
-      <section className="border-t border-border px-6 py-5">
-        <Button
-          variant="ghost"
-          disabled={!canExportEvidenceReceipt}
-          className="min-h-10 px-0 text-base font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground"
-        >
-          <Download className="size-4" aria-hidden="true" />
-          Export evidence receipt
-        </Button>
       </section>
     </aside>
   );

@@ -29,6 +29,7 @@ export type InspectionBrowserHandle = {
   provider: "local" | "browserbase";
   browserbaseSessionTimeoutMs?: number;
   initialize: (reportStartup: InspectionBrowserStartupReporter) => Promise<void>;
+  refreshDestinationGuard?: () => Promise<void>;
   closeEnvironment: () => Promise<void>;
   requestBrowserbaseLiveViewUrl?: (sessionId: string) => Promise<string>;
   requestBrowserbaseSessionMetadata?: (

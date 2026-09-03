@@ -83,7 +83,6 @@ export const GET = async (
           run,
           (reportLifecycle) =>
             openInspectionBrowserSession(
-              run.targetHostname,
               (progress) => {
                 send({ kind: "section.progress", section: "tools", progress });
               },

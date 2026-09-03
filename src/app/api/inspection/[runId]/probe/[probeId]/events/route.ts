@@ -103,7 +103,6 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
             probe,
             (reportLifecycle) =>
               openInspectionBrowserSession(
-                run.targetHostname,
                 (progress) =>
                   publishInspectionProbeEvent(probe, {
                     kind: "section.progress",
