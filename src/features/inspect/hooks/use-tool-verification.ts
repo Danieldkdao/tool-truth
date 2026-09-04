@@ -4,6 +4,7 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 
 import type {
   ContractAnalysisData,
+  DetectedTool,
   ExecutionEvidenceData,
   ToolVerificationStatus,
 } from "@/features/inspect/components/inspection-data";
@@ -21,6 +22,7 @@ export type ToolVerificationRecord = {
   browserSession: BrowserSessionView | null;
   evidenceData: ExecutionEvidenceData | null;
   analysisData: ContractAnalysisData | null;
+  verifiedTool: DetectedTool | null;
   evidenceProgress: SectionProgress;
   analysisProgress: SectionProgress;
 };
@@ -50,6 +52,7 @@ const createInitialRecord = (attempt = 0): ToolVerificationRecord => ({
   browserSession: null,
   evidenceData: null,
   analysisData: null,
+  verifiedTool: null,
   evidenceProgress: {
     value: 5,
     message: "Waiting to start a verification probe",
@@ -131,6 +134,8 @@ const reduceVerification = (
           : { ...record, analysisProgress: event.progress };
       case "browser.session.updated":
         return { ...record, browserSession: event.data };
+      case "tool.ready":
+        return { ...record, verifiedTool: event.data };
       case "evidence.ready":
         return { ...record, evidenceData: event.data };
       case "analysis.ready":

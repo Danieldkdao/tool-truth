@@ -90,6 +90,11 @@ export type VerificationStreamEvent =
       data: BrowserSessionView;
     }
   | {
+      kind: "tool.ready";
+      toolId: string;
+      data: DetectedTool;
+    }
+  | {
       kind: "evidence.ready";
       toolId: string;
       data: ExecutionEvidenceData;

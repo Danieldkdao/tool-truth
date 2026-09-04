@@ -30,6 +30,23 @@ export type DeterministicFact = {
   statement: string;
 };
 
+export type DeterministicHardRuleId =
+  | "invocation_error"
+  | "output_schema_mismatch"
+  | "readonly_mutation"
+  | "promised_mutation_missing"
+  | "forbidden_destination"
+  | "idempotency_violation"
+  | "confirmation_missing";
+
+export type DeterministicHardRuleViolation = {
+  id: DeterministicHardRuleId;
+  title: string;
+  statement: string;
+  suggestedRepair: string;
+  evidenceIds: string[];
+};
+
 export type SemanticRequirementEvaluation = {
   requirement: string;
   status: "satisfied" | "violated" | "uncertain";
@@ -54,6 +71,52 @@ export type SemanticEvaluatorResult = {
   error?: string;
 };
 
+export type RegressionExpectedOutcome =
+  | "pass"
+  | "deterministic_failure"
+  | "semantic_failure"
+  | "output_state_contradiction"
+  | "trust_boundary_failure"
+  | "repeated_call_failure";
+
+export type RegressionManifestCheck = {
+  id: "verdict" | "decision_basis" | "evidence_status" | "outcome_signal";
+  label: string;
+  passed: boolean;
+  expected: string;
+  actual: string;
+};
+
+export type RegressionManifestEvaluation = {
+  fixture: {
+    id: "agentmart";
+    name: "AgentMart";
+    version: string;
+    matchedOrigin: string;
+  };
+  manifestVersion: string;
+  toolName: string;
+  status: "matched" | "mismatched" | "not_covered";
+  expectation: {
+    outcome: RegressionExpectedOutcome;
+    label: string;
+    description: string;
+    acceptedVerdicts: ContractAnalysisData["verdict"][];
+    acceptedDecisionBases: ContractAnalysisData["decisionBasis"][];
+    acceptedEvidenceStatuses: ContractAnalysisData["evidenceStatus"][];
+    expectedViolationIds?: DeterministicHardRuleId[];
+    expectedSemanticSignals?: string[];
+  } | null;
+  actual: {
+    verdict: ContractAnalysisData["verdict"];
+    decisionBasis: ContractAnalysisData["decisionBasis"];
+    evidenceStatus: ContractAnalysisData["evidenceStatus"];
+    violationIds: DeterministicHardRuleId[];
+    violatedSemanticRequirements: string[];
+  };
+  checks: RegressionManifestCheck[];
+};
+
 export type DetectedTool = {
   id: string;
   name: string;
@@ -61,6 +124,7 @@ export type DetectedTool = {
   result: string;
   frameId?: string;
   inputSchema?: string | Record<string, unknown>;
+  outputSchema?: string | Record<string, unknown>;
   annotations?: Record<string, unknown>;
 };
 
@@ -120,6 +184,7 @@ export type VerificationStatistics = {
   discoveryDurationMs: number;
   navigationDurationMs: number | null;
   invocationDurationMs: number;
+  invocationCount: number;
   analysisDurationMs: number;
   totalDurationMs: number;
   toolCount: number;
@@ -143,6 +208,13 @@ export type EvidenceScreenshot = {
 export type ExecutionEvidenceData = {
   runLabel: string;
   screenshots?: EvidenceScreenshot[];
+  repeatedInvocation?: {
+    reason: "idempotency";
+    firstStatus: "Completed" | "Canceled" | "Error";
+    secondStatus: "Completed" | "Canceled" | "Error";
+    secondStateChanges: StateChange[];
+    secondMutatingRequests: string[];
+  };
   timeline: TimelineEntry[];
   stateChanges: StateChange[];
   network: NetworkEntry[];
@@ -160,6 +232,7 @@ export type ContractAnalysisData = {
   deterministic: {
     hardVerdict: "failed" | "error" | null;
     facts: DeterministicFact[];
+    violations: DeterministicHardRuleViolation[];
   };
   evaluators: SemanticEvaluatorResult[];
   adjudication?: SemanticEvaluation;
@@ -173,6 +246,7 @@ export type ContractAnalysisData = {
     | "evaluator_consensus"
     | "adjudication"
     | "insufficient_evidence";
+  regression?: RegressionManifestEvaluation;
 };
 
 export const detectedTools: DetectedTool[] = [
@@ -307,6 +381,16 @@ export const contractAnalysis: ContractAnalysisData = {
       {
         id: "state_1",
         statement: "A declared read-only operation changed persistent state.",
+      },
+    ],
+    violations: [
+      {
+        id: "readonly_mutation",
+        title: "A read-only tool changed observable state",
+        statement: "A declared read-only operation changed persistent state.",
+        suggestedRepair:
+          "Remove the side effect or update the declared contract.",
+        evidenceIds: ["contract", "hard_rule_signals"],
       },
     ],
   },

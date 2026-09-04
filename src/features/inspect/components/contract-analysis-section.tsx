@@ -1,4 +1,4 @@
-import { Play } from "lucide-react";
+import { BadgeCheck, BadgeX, CircleHelp, Play } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -8,12 +8,14 @@ import {
 } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { EvidenceReceiptExportMenu } from "@/features/inspect/components/evidence-receipt-export-menu";
 import type {
   ContractAnalysisData,
   DetectedTool,
   Finding,
 } from "@/features/inspect/components/inspection-data";
 import type { SectionProgress } from "@/features/inspect/components/inspection-stream";
+import type { EvidenceReceiptSource } from "@/features/inspect/lib/evidence-receipt";
 
 type ContractAnalysisSectionProps = {
   data: ContractAnalysisData | null;
@@ -21,6 +23,7 @@ type ContractAnalysisSectionProps = {
   isRunning: boolean;
   isBusy: boolean;
   error?: string | null;
+  exportSource: EvidenceReceiptSource | null;
   onRunVerification: () => void;
 };
 
@@ -52,12 +55,16 @@ const createPendingFinding = (tool: DetectedTool): Finding => {
   };
 };
 
+const formatRegressionValue = (value: string) =>
+  value.replaceAll("_", " ");
+
 export const ContractAnalysisSection = ({
   data,
   selectedTool,
   isRunning,
   isBusy,
   error,
+  exportSource,
   onRunVerification,
 }: ContractAnalysisSectionProps) => {
   const analysisFindings = data ? Object.values(data.findings) : [];
@@ -139,7 +146,7 @@ export const ContractAnalysisSection = ({
                   ? "The tool invocation did not complete successfully, so deterministic evidence ended the verification."
                 : verdict === "failed"
                   ? data?.decisionBasis === "hard_evidence"
-                    ? `${data.unexpectedStateChanges} unexpected changes were confirmed by deterministic evidence.`
+                    ? `${data.deterministic.violations.length} objective contract violation${data.deterministic.violations.length === 1 ? " was" : "s were"} confirmed by deterministic evidence.`
                     : data?.decisionBasis === "adjudication"
                       ? "A conditional adjudicator resolved the evaluator disagreement and found that the observed behavior did not satisfy the declared contract."
                       : "Both semantic evaluators found that the observed behavior did not satisfy the declared contract."
@@ -224,12 +231,101 @@ export const ContractAnalysisSection = ({
             Evidence packet: {data.evidenceStatus}
           </p>
 
+          {data.deterministic.violations.length > 0 && (
+            <div className="mt-5 space-y-3">
+              <h4 className="font-sans font-semibold">Hard rules triggered</h4>
+              {data.deterministic.violations.map((violation) => (
+                <article
+                  key={violation.id}
+                  className="rounded-lg border border-destructive/30 bg-destructive/[0.045] p-4"
+                >
+                  <p className="font-medium text-destructive">
+                    {violation.title}
+                  </p>
+                  <p className="mt-1 leading-6 text-muted-foreground">
+                    {violation.statement}
+                  </p>
+                  <p className="mt-3 leading-6">
+                    <span className="font-medium">Suggested repair:</span>{" "}
+                    {violation.suggestedRepair}
+                  </p>
+                  <p className="mt-2 font-mono text-sm text-muted-foreground">
+                    Evidence: {violation.evidenceIds.join(", ")}
+                  </p>
+                </article>
+              ))}
+            </div>
+          )}
+
           {data.deterministic.facts.length > 0 && (
             <ul className="mt-4 space-y-2 border-l-2 border-border pl-4 text-muted-foreground">
               {data.deterministic.facts.map((fact) => (
                 <li key={fact.id}>{fact.statement}</li>
               ))}
             </ul>
+          )}
+
+          {data.regression && (
+            <article
+              className={`mt-5 rounded-lg border p-4 ${
+                data.regression.status === "matched"
+                  ? "border-emerald-600/30 bg-emerald-600/[0.055]"
+                  : data.regression.status === "mismatched"
+                    ? "border-destructive/30 bg-destructive/[0.055]"
+                    : "border-amber-600/30 bg-amber-600/[0.055]"
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                {data.regression.status === "matched" ? (
+                  <BadgeCheck
+                    className="mt-0.5 size-5 shrink-0 text-emerald-600 dark:text-emerald-400"
+                    aria-hidden="true"
+                  />
+                ) : data.regression.status === "mismatched" ? (
+                  <BadgeX
+                    className="mt-0.5 size-5 shrink-0 text-destructive"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <CircleHelp
+                    className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-400"
+                    aria-hidden="true"
+                  />
+                )}
+                <div className="min-w-0 flex-1">
+                  <h4 className="font-sans font-semibold">
+                    {data.regression.status === "matched"
+                      ? "AgentMart regression check passed"
+                      : data.regression.status === "mismatched"
+                        ? "AgentMart regression check failed"
+                        : "AgentMart tool is not covered"}
+                  </h4>
+                  <p className="mt-1 leading-6 text-muted-foreground">
+                    {data.regression.expectation
+                      ? `Expected ${data.regression.expectation.label.toLowerCase()}; observed ${formatRegressionValue(data.regression.actual.verdict)} using ${formatRegressionValue(data.regression.actual.decisionBasis)}.`
+                      : "This URL is the AgentMart fixture, but this tool has no expectation in the current manifest."}
+                  </p>
+                  <p className="mt-2 font-mono text-muted-foreground">
+                    Manifest {data.regression.manifestVersion} · Fixture {data.regression.fixture.version}
+                  </p>
+                </div>
+              </div>
+
+              {data.regression.checks.length > 0 && (
+                <ul className="mt-4 space-y-2 border-l-2 border-border pl-4">
+                  {data.regression.checks.map((check) => (
+                    <li key={check.id}>
+                      <p className="font-medium">
+                        {check.passed ? "Matched" : "Mismatch"}: {check.label}
+                      </p>
+                      <p className="mt-1 text-muted-foreground">
+                        Expected {formatRegressionValue(check.expected)} · Actual {formatRegressionValue(check.actual)}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </article>
           )}
 
           {data.evaluators.length > 0 && (
@@ -376,6 +472,10 @@ export const ContractAnalysisSection = ({
           {data?.suggestedRepair ??
             "A repair recommendation will appear after the observed behavior is compared with the tool contract."}
         </p>
+      </section>
+
+      <section className="border-t border-border px-6 py-5">
+        <EvidenceReceiptExportMenu source={exportSource} />
       </section>
     </aside>
   );

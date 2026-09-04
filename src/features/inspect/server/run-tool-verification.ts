@@ -12,6 +12,7 @@ import type {
 
 import type {
   BrowserbaseSessionStatistics,
+  ContractAnalysisData,
   DetectedTool,
   EvidenceScreenshot,
   EvidenceLogEntry,
@@ -22,6 +23,15 @@ import type {
   VerificationStatistics,
 } from "@/features/inspect/components/inspection-data";
 import type { VerificationStreamEvent } from "@/features/inspect/components/inspection-stream";
+import {
+  evaluateAgentMartRegression,
+  getAgentMartRegressionInput,
+} from "@/features/inspect/regression/agentmart-regression";
+import {
+  toolPromisesIdempotency,
+  type DeterministicNetworkRequest,
+  type RepeatedInvocationEvidence,
+} from "@/features/inspect/server/deterministic-hard-rules";
 import type {
   ObservedNetworkEntry,
   ObservedRuntimeError,
@@ -35,15 +45,25 @@ import type {
   InspectionBrowserSession,
   InspectionBrowserSessionContext,
 } from "@/features/inspect/server/inspection-browser-session";
-import { readStableWebMcpTools } from "@/features/inspect/server/discover-webmcp-tools";
+import {
+  readStableWebMcpTools,
+  toDetectedTool,
+} from "@/features/inspect/server/discover-webmcp-tools";
 import { getInspectionBrowserLabel } from "@/features/inspect/server/stagehand-browser";
-import { validateInspectionUrl } from "@/features/inspect/server/validate-inspection-url";
+import {
+  parseInspectionUrl,
+  UnsafeInspectionUrlError,
+  validateInspectionHostname,
+  validateInspectionUrl,
+} from "@/features/inspect/server/validate-inspection-url";
 
 const NAVIGATION_TIMEOUT_MS = 20_000;
 const TOOL_INVOCATION_TIMEOUT_MS = 20_000;
 const MAX_LOG_ENTRIES = 250;
 const MAX_NETWORK_ENTRIES = 100;
 const MAX_TEXT_LENGTH = 20_000;
+const MAX_DESTINATION_HOSTNAME_CHECKS = 32;
+const DESTINATION_CHECK_CONCURRENCY = 8;
 
 const SNAPSHOT_EXPRESSION = `(() => {
   const compactText = (element, maxLength = 240) => String(
@@ -154,6 +174,8 @@ type BrowserSnapshot = Omit<
   };
   network: ObservedNetworkEntry[];
   runtimeErrors: ObservedRuntimeError[];
+  networkLimitReached: boolean;
+  runtimeErrorLimitReached: boolean;
 };
 
 type VerificationReporter = (event: VerificationStreamEvent) => void;
@@ -268,27 +290,6 @@ const stringifyCompact = (value: unknown, maxLength = 800) => {
     serialized = String(value);
   }
   return sanitizeText(serialized, maxLength);
-};
-
-const toDetectedTool = (tool: WebMCPTool): DetectedTool => {
-  const annotations = tool.annotations ?? {};
-  const result =
-    annotations.untrustedContent === true ||
-    annotations.untrustedContentHint === true
-      ? "Returns untrusted content"
-      : annotations.readOnly === true || annotations.readOnlyHint === true
-        ? "Declared read-only"
-        : "Available";
-
-  return {
-    id: `${tool.frameId}:${tool.name}`,
-    name: tool.name,
-    description: tool.description?.trim() || "No description provided",
-    result,
-    frameId: tool.frameId,
-    inputSchema: tool.inputSchema,
-    annotations: tool.annotations,
-  };
 };
 
 const addLog = (
@@ -490,6 +491,78 @@ const toNetworkEntries = (entries: ObservedNetworkEntry[]): NetworkEntry[] => {
   }));
 };
 
+const toDeterministicNetworkRequests = (
+  entries: ObservedNetworkEntry[],
+): DeterministicNetworkRequest[] =>
+  entries.map((entry) => ({
+    type: entry.type,
+    method: entry.method,
+    path: safeUrlPath(entry.url),
+    status: entry.status,
+    error: entry.error ? sanitizeText(entry.error, 300) : null,
+  }));
+
+const findForbiddenDestinationRequests = async (
+  entries: ObservedNetworkEntry[],
+) => {
+  const candidates = entries.filter(
+    (entry) => entry.status === 0 || entry.status === 403,
+  );
+  const blockedEntries = new Set<ObservedNetworkEntry>();
+  const entriesByHostname = new Map<string, ObservedNetworkEntry[]>();
+
+  for (const entry of candidates) {
+    try {
+      const { hostname } = parseInspectionUrl(entry.url);
+      const hostnameEntries = entriesByHostname.get(hostname) ?? [];
+      hostnameEntries.push(entry);
+      entriesByHostname.set(hostname, hostnameEntries);
+    } catch (error) {
+      if (error instanceof UnsafeInspectionUrlError) blockedEntries.add(entry);
+    }
+  }
+
+  const hostnames = [...entriesByHostname.keys()];
+  const checkedHostnames = hostnames.slice(0, MAX_DESTINATION_HOSTNAME_CHECKS);
+  for (
+    let index = 0;
+    index < checkedHostnames.length;
+    index += DESTINATION_CHECK_CONCURRENCY
+  ) {
+    const batch = checkedHostnames.slice(
+      index,
+      index + DESTINATION_CHECK_CONCURRENCY,
+    );
+    const results = await Promise.all(
+      batch.map(async (hostname) => {
+        try {
+          await validateInspectionHostname(hostname);
+          return { hostname, blocked: false };
+        } catch (error) {
+          return {
+            hostname,
+            blocked: error instanceof UnsafeInspectionUrlError,
+          };
+        }
+      }),
+    );
+
+    for (const { hostname, blocked } of results) {
+      if (!blocked) continue;
+      for (const entry of entriesByHostname.get(hostname) ?? []) {
+        blockedEntries.add(entry);
+      }
+    }
+  }
+
+  return {
+    requests: candidates
+      .filter((entry) => blockedEntries.has(entry))
+      .map((entry) => `${entry.method} ${safeUrlPath(entry.url)} · blocked`),
+    complete: hostnames.length <= MAX_DESTINATION_HOSTNAME_CHECKS,
+  };
+};
+
 const captureSnapshot = async (
   stagehand: InspectionBrowserSessionContext["browser"],
   page: InspectionBrowserSessionContext["page"],
@@ -534,6 +607,8 @@ const captureSnapshot = async (
     },
     network: observedEvidence.network,
     runtimeErrors: observedEvidence.runtimeErrors,
+    networkLimitReached: observedEvidence.networkLimitReached,
+    runtimeErrorLimitReached: observedEvidence.runtimeErrorLimitReached,
   } satisfies BrowserSnapshot;
 };
 
@@ -750,10 +825,12 @@ export const runToolVerification = async ({
         ...toDetectedTool(liveTool),
         id: selectedTool.id,
       };
+      report({ kind: "tool.ready", toolId: selectedTool.id, data: tool });
       const toolInput = await generateSafeToolInput(
         tool,
         recordAiActivity,
         signal,
+        getAgentMartRegressionInput(targetUrl, tool.name),
       );
       throwIfAborted(signal);
       recordTimeline("Tool input prepared", stringifyCompact(toolInput));
@@ -776,42 +853,141 @@ export const runToolVerification = async ({
         section: "evidence",
         progress: { value: 58, message: `Invoking ${tool.name}` },
       });
-      throwIfAborted(signal);
-      const invocationStartedAt = Date.now();
-      const invocation = await page.invokeWebMCPTool(tool.name, toolInput, {
-        frameId: liveTool.frameId,
-        timeoutMs: TOOL_INVOCATION_TIMEOUT_MS,
-      });
-      recordTimeline(
-        "Tool invoked",
-        `${tool.name}(${stringifyCompact(toolInput, 300)})`,
-      );
-
-      let result: WebMCPToolResult;
-      try {
-        result = await waitForInvocationResult(invocation, signal);
-      } catch (error) {
+      const invokeTool = async (
+        invokedEvent: string,
+        completedEvent: string,
+      ) => {
         throwIfAborted(signal);
-        result = {
-          invocationId: invocation.invocationId,
-          status: "Error",
-          errorText: error instanceof Error ? error.message : String(error),
-        };
-      }
-      const invocationDurationMs = Date.now() - invocationStartedAt;
-      recordTimeline(
-        "Tool completed",
-        `${result.status} in ${invocationDurationMs} ms · ${stringifyCompact(result.output ?? result.errorText, 500)}`,
-      );
+        const invocationStartedAt = Date.now();
+        const invocation = await page.invokeWebMCPTool(tool.name, toolInput, {
+          frameId: liveTool.frameId,
+          timeoutMs: TOOL_INVOCATION_TIMEOUT_MS,
+        });
+        recordTimeline(
+          invokedEvent,
+          `${tool.name}(${stringifyCompact(toolInput, 300)})`,
+        );
 
+        let invocationResult: WebMCPToolResult;
+        try {
+          invocationResult = await waitForInvocationResult(invocation, signal);
+        } catch (error) {
+          throwIfAborted(signal);
+          invocationResult = {
+            invocationId: invocation.invocationId,
+            status: "Error",
+            errorText: error instanceof Error ? error.message : String(error),
+          };
+        }
+        const durationMs = Date.now() - invocationStartedAt;
+        recordTimeline(
+          completedEvent,
+          `${invocationResult.status} in ${durationMs} ms · ${stringifyCompact(invocationResult.output ?? invocationResult.errorText, 500)}`,
+        );
+
+        return { result: invocationResult, durationMs };
+      };
+
+      const firstInvocation = await invokeTool("Tool invoked", "Tool completed");
       await page.waitForTimeout(350);
       throwIfAborted(signal);
       await evidenceObserver.refresh();
-      const after = await captureSnapshot(stagehand, page, evidenceObserver);
+      const afterFirstInvocation = await captureSnapshot(
+        stagehand,
+        page,
+        evidenceObserver,
+      );
       throwIfAborted(signal);
+
+      let after = afterFirstInvocation;
+      let invocationDurationMs = firstInvocation.durationMs;
+      let invocationCount = 1;
+      let repeatedInvocation: RepeatedInvocationEvidence | undefined;
+
+      if (
+        firstInvocation.result.status === "Completed" &&
+        toolPromisesIdempotency(tool)
+      ) {
+        report({
+          kind: "section.progress",
+          section: "evidence",
+          progress: {
+            value: 64,
+            message: "Repeating the same input to verify idempotency",
+          },
+        });
+        evidenceObserver.reset();
+        const secondInvocation = await invokeTool(
+          "Idempotency replay",
+          "Repeated call completed",
+        );
+        invocationCount = 2;
+        invocationDurationMs += secondInvocation.durationMs;
+        await page.waitForTimeout(350);
+        throwIfAborted(signal);
+        await evidenceObserver.refresh();
+        const afterSecondInvocation = await captureSnapshot(
+          stagehand,
+          page,
+          evidenceObserver,
+        );
+        throwIfAborted(signal);
+        const secondStateChanges = compareSnapshots(
+          afterFirstInvocation,
+          afterSecondInvocation,
+        );
+        const secondObservedMutations = afterSecondInvocation.network.filter(
+          isObservedMutationRequest,
+        );
+        repeatedInvocation = {
+          firstStatus: firstInvocation.result.status,
+          secondStatus: secondInvocation.result.status,
+          firstOutput: firstInvocation.result.output,
+          secondOutput: secondInvocation.result.output,
+          secondStateChanges,
+          secondMutatingRequests: secondObservedMutations.map(
+            (entry) =>
+              `${entry.method} ${safeUrlPath(entry.url)} · ${entry.status}`,
+          ),
+        };
+        after = {
+          ...afterSecondInvocation,
+          network: [
+            ...afterFirstInvocation.network,
+            ...afterSecondInvocation.network,
+          ],
+          runtimeErrors: [
+            ...afterFirstInvocation.runtimeErrors,
+            ...afterSecondInvocation.runtimeErrors,
+          ],
+          networkLimitReached:
+            afterFirstInvocation.networkLimitReached ||
+            afterSecondInvocation.networkLimitReached,
+          runtimeErrorLimitReached:
+            afterFirstInvocation.runtimeErrorLimitReached ||
+            afterSecondInvocation.runtimeErrorLimitReached,
+        };
+        recordTimeline(
+          "Idempotency comparison",
+          secondStateChanges.length === 0
+            ? "The repeated call caused no additional observable state change"
+            : `${secondStateChanges.length} additional observable changes followed the repeated call`,
+        );
+      }
+
+      const result = firstInvocation.result;
       const stateChanges = compareSnapshots(before, after);
       const network = toNetworkEntries(after.network);
       const observedMutations = after.network.filter(isObservedMutationRequest);
+      const destinationInspection =
+        await findForbiddenDestinationRequests(after.network);
+      const forbiddenDestinationRequests = destinationInspection.requests;
+      const evidenceComplete =
+        !after.networkLimitReached &&
+        !after.runtimeErrorLimitReached &&
+        destinationInspection.complete &&
+        stateChanges.length < 100 &&
+        (repeatedInvocation?.secondStateChanges.length ?? 0) < 100;
 
       for (const runtimeError of after.runtimeErrors) {
         addLog(logs, startedAt, {
@@ -859,6 +1035,16 @@ export const runToolVerification = async ({
       const evidence: ExecutionEvidenceData = {
         runLabel: `Probe ${probeId.slice(0, 12)} · ${tool.name}`,
         screenshots,
+        repeatedInvocation: repeatedInvocation
+          ? {
+              reason: "idempotency",
+              firstStatus: repeatedInvocation.firstStatus,
+              secondStatus: repeatedInvocation.secondStatus,
+              secondStateChanges: repeatedInvocation.secondStateChanges,
+              secondMutatingRequests:
+                repeatedInvocation.secondMutatingRequests,
+            }
+          : undefined,
         timeline,
         stateChanges,
         network,
@@ -870,9 +1056,14 @@ export const runToolVerification = async ({
         after,
         before,
         evidence,
+        evidenceComplete,
+        forbiddenDestinationRequests,
         invocationDurationMs,
+        invocationCount,
+        networkRequests: toDeterministicNetworkRequests(after.network),
         observedMutations,
         requestCount: after.network.length,
+        repeatedInvocation,
         result,
         stateChanges,
         tool,
@@ -935,7 +1126,11 @@ export const runToolVerification = async ({
       },
       stateChanges: captured.stateChanges,
       network: captured.evidence.network,
+      networkRequests: captured.networkRequests,
       mutatingRequests,
+      forbiddenDestinationRequests: captured.forbiddenDestinationRequests,
+      repeatedInvocation: captured.repeatedInvocation,
+      evidenceComplete: captured.evidenceComplete,
       runtimeLogs: logs.filter((entry) => entry.source !== "ai"),
       timeline: captured.evidence.timeline,
       sandboxLabel: getInspectionBrowserLabel(),
@@ -943,13 +1138,33 @@ export const runToolVerification = async ({
     recordAiActivity,
     signal,
   );
+  const regression = evaluateAgentMartRegression({
+    targetUrl,
+    toolName: captured.tool.name,
+    analysis,
+  });
+  const completedAnalysis: ContractAnalysisData = regression
+    ? { ...analysis, regression }
+    : analysis;
   const analysisDurationMs = Date.now() - analysisStartedAt;
   throwIfAborted(signal);
+
+  if (regression) {
+    recordOperationalLog(
+      "tooltruth",
+      regression.status === "matched"
+        ? `AgentMart regression manifest ${regression.manifestVersion} matched ${captured.tool.name}.`
+        : regression.status === "mismatched"
+          ? `AgentMart regression manifest ${regression.manifestVersion} did not match ${captured.tool.name}.`
+          : `AgentMart regression manifest ${regression.manifestVersion} does not cover ${captured.tool.name}.`,
+      regression.status === "matched" ? "info" : "warning",
+    );
+  }
 
   const totalDurationMs = Date.now() - startedAt;
   recordOperationalLog(
     "tooltruth",
-    `Verification measurements completed in ${totalDurationMs} ms with ${captured.requestCount} requests and ${captured.observedMutations.length} mutating requests.`,
+    `Verification measurements completed in ${totalDurationMs} ms with ${captured.invocationCount} invocation${captured.invocationCount === 1 ? "" : "s"}, ${captured.requestCount} requests, and ${captured.observedMutations.length} mutating requests.`,
   );
   const statistics: VerificationStatistics = {
     provider: releasedSessionStatistics.provider,
@@ -957,6 +1172,7 @@ export const runToolVerification = async ({
     discoveryDurationMs,
     navigationDurationMs,
     invocationDurationMs: captured.invocationDurationMs,
+    invocationCount: captured.invocationCount,
     analysisDurationMs,
     totalDurationMs,
     toolCount: captured.toolCount,
@@ -976,14 +1192,18 @@ export const runToolVerification = async ({
     toolId: selectedTool.id,
     data: captured.evidence,
   });
-  report({ kind: "analysis.ready", toolId: selectedTool.id, data: analysis });
+  report({
+    kind: "analysis.ready",
+    toolId: selectedTool.id,
+    data: completedAnalysis,
+  });
   report({ kind: "probe.completed", toolId: selectedTool.id });
 
   console.info("ToolTruth verification completed", {
     runId,
     probeId,
     tool: captured.tool.name,
-    verdict: analysis.verdict,
+    verdict: completedAnalysis.verdict,
     durationMs: Date.now() - startedAt,
     stateChangeCount: captured.stateChanges.length,
     requestCount: captured.requestCount,

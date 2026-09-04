@@ -1,7 +1,14 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowRight, Globe2, KeyRound, Sparkles } from "lucide-react";
+import {
+  ArrowRight,
+  Eye,
+  EyeOff,
+  Globe2,
+  KeyRound,
+  Sparkles,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
@@ -14,12 +21,12 @@ import {
   inspectFormSchema,
   type InspectFormValues,
 } from "@/features/inspect/actions/schemas";
+import { AGENTMART_DEMO_URL } from "@/features/inspect/regression/agentmart-fixture";
 import { showToast } from "@/lib/utils";
-
-const AGENTMART_DEMO_URL = "https://tooltruth-agentmart.vercel.app";
 
 export const WebsiteInspectionForm = () => {
   const [loading, setLoading] = useState(false);
+  const [passwordIsVisible, setPasswordIsVisible] = useState(false);
   const router = useRouter();
   const form = useForm<InspectFormValues>({
     resolver: zodResolver(inspectFormSchema),
@@ -161,12 +168,27 @@ export const WebsiteInspectionForm = () => {
               <Input
                 {...field}
                 id={field.name}
-                type="password"
+                type={passwordIsVisible ? "text" : "password"}
                 autoComplete="current-password"
                 aria-invalid={fieldState.invalid}
                 placeholder="Enter the password provided to you"
-                className="h-14 rounded-2xl border-border bg-background pl-12 pr-4 text-base shadow-xs placeholder:text-muted-foreground/80 focus-visible:bg-card md:text-base"
+                className="h-14 rounded-2xl border-border bg-background pl-12 pr-12 text-base shadow-xs placeholder:text-muted-foreground/80 focus-visible:bg-card md:text-base"
               />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label={passwordIsVisible ? "Hide password" : "Show password"}
+                aria-pressed={passwordIsVisible}
+                onClick={() => setPasswordIsVisible((visible) => !visible)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-xl text-muted-foreground hover:text-foreground"
+              >
+                {passwordIsVisible ? (
+                  <EyeOff className="size-5" aria-hidden="true" />
+                ) : (
+                  <Eye className="size-5" aria-hidden="true" />
+                )}
+              </Button>
             </div>
 
             {fieldState.invalid && <FieldError errors={[fieldState.error]} />}

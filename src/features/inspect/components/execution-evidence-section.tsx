@@ -240,6 +240,7 @@ export const ExecutionEvidenceSection = ({
                       "Invocation",
                       formatDuration(data.statistics.invocationDurationMs),
                     ],
+                    ["Invocations", String(data.statistics.invocationCount)],
                     [
                       "Analysis",
                       formatDuration(data.statistics.analysisDurationMs),
