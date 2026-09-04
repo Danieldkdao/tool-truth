@@ -8,6 +8,7 @@ import {
   type EvidenceReceiptSource,
 } from "./evidence-receipt.ts";
 import { serializeEvidenceReceiptMarkdown } from "./evidence-receipt-markdown.ts";
+import { createEvidenceReceiptResult } from "./evidence-receipt-result.ts";
 import { REDACTED_VALUE, redactSensitiveText } from "./report-redaction.ts";
 
 const SECRET_VALUES = [
@@ -263,6 +264,36 @@ test("creates filesystem-safe, format-specific filenames", () => {
   assert.equal(
     createEvidenceReceiptFilename(receipt, "markdown"),
     "tooltruth-preview-order-2026-09-03T18-45-00-000Z.md",
+  );
+});
+
+test("returns the complete receipt in the WebMCP-selected format", () => {
+  const jsonResult = createEvidenceReceiptResult(createSource(), "json");
+  const markdownResult = createEvidenceReceiptResult(
+    createSource(),
+    "markdown",
+  );
+
+  assert.equal(jsonResult.format, "json");
+  assert.equal(jsonResult.mediaType, "application/json");
+  assert.equal(typeof jsonResult.content, "object");
+  assert.equal(
+    typeof jsonResult.content === "object"
+      ? jsonResult.content.schemaVersion
+      : null,
+    "1.1",
+  );
+
+  assert.equal(markdownResult.format, "markdown");
+  assert.equal(markdownResult.mediaType, "text/markdown");
+  assert.equal(typeof markdownResult.content, "string");
+  assert.match(
+    String(markdownResult.content),
+    /^# ToolTruth WebMCP Evidence Receipt/m,
+  );
+  assert.match(
+    String(markdownResult.content),
+    /^## Appendix: complete sanitized receipt$/m,
   );
 });
 
