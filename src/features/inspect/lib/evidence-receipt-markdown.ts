@@ -304,6 +304,11 @@ export const serializeEvidenceReceiptMarkdown = (receipt: EvidenceReceipt) => {
   const deterministic = asObject(analysis.deterministic);
   const facts = asArray(deterministic?.facts);
   const adjudication = asObject(analysis.adjudication);
+  const regression = asObject(analysis.regression);
+  const regressionExpectation = asObject(regression?.expectation);
+  const regressionActual = asObject(regression?.actual);
+  const regressionFixture = asObject(regression?.fixture);
+  const regressionChecks = asArray(regression?.checks);
 
   return [
     "# ToolTruth WebMCP Evidence Receipt",
@@ -324,6 +329,7 @@ export const serializeEvidenceReceiptMarkdown = (receipt: EvidenceReceipt) => {
       ["Evidence status", titleCase(analysis.evidenceStatus)],
       ["Decision basis", titleCase(analysis.decisionBasis)],
       ["Consensus", titleCase(analysis.consensus)],
+      ["Regression status", titleCase(regression?.status)],
     ]),
     "",
     "## Executive summary",
@@ -387,6 +393,36 @@ export const serializeEvidenceReceiptMarkdown = (receipt: EvidenceReceipt) => {
     adjudication
       ? createEvaluationSection("Adjudicated result", adjudication)
       : "_Conditional adjudication was not required or was unavailable._",
+    "",
+    "## Fixture regression check",
+    "",
+    regression
+      ? createDefinitionTable([
+          ["Fixture", regressionFixture?.name],
+          ["Fixture version", regressionFixture?.version],
+          ["Manifest version", regression.manifestVersion],
+          ["Status", titleCase(regression.status)],
+          ["Expected outcome", regressionExpectation?.label],
+          ["Actual verdict", titleCase(regressionActual?.verdict)],
+          ["Actual decision basis", titleCase(regressionActual?.decisionBasis)],
+          ["Actual evidence status", titleCase(regressionActual?.evidenceStatus)],
+        ])
+      : "_This verification was not associated with a known regression fixture._",
+    "",
+    regressionChecks.length > 0
+      ? createTable(
+          ["Check", "Result", "Expected", "Actual"],
+          regressionChecks.map((value) => {
+            const check = asObject(value);
+            return [
+              check?.label,
+              check?.passed ? "Matched" : "Mismatch",
+              check?.expected,
+              check?.actual,
+            ];
+          }),
+        )
+      : "",
     "",
     "## Execution evidence",
     "",

@@ -21,9 +21,8 @@ import {
   inspectFormSchema,
   type InspectFormValues,
 } from "@/features/inspect/actions/schemas";
+import { AGENTMART_DEMO_URL } from "@/features/inspect/regression/agentmart-fixture";
 import { showToast } from "@/lib/utils";
-
-const AGENTMART_DEMO_URL = "https://tooltruth-agentmart.vercel.app";
 
 export const WebsiteInspectionForm = () => {
   const [loading, setLoading] = useState(false);

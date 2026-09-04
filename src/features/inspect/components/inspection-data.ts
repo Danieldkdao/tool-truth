@@ -54,6 +54,48 @@ export type SemanticEvaluatorResult = {
   error?: string;
 };
 
+export type RegressionExpectedOutcome =
+  | "pass"
+  | "deterministic_failure"
+  | "semantic_failure"
+  | "output_state_contradiction"
+  | "trust_boundary_failure"
+  | "repeated_call_failure";
+
+export type RegressionManifestCheck = {
+  id: "verdict" | "decision_basis" | "evidence_status";
+  label: string;
+  passed: boolean;
+  expected: string;
+  actual: string;
+};
+
+export type RegressionManifestEvaluation = {
+  fixture: {
+    id: "agentmart";
+    name: "AgentMart";
+    version: string;
+    matchedOrigin: string;
+  };
+  manifestVersion: string;
+  toolName: string;
+  status: "matched" | "mismatched" | "not_covered";
+  expectation: {
+    outcome: RegressionExpectedOutcome;
+    label: string;
+    description: string;
+    acceptedVerdicts: ContractAnalysisData["verdict"][];
+    acceptedDecisionBases: ContractAnalysisData["decisionBasis"][];
+    acceptedEvidenceStatuses: ContractAnalysisData["evidenceStatus"][];
+  } | null;
+  actual: {
+    verdict: ContractAnalysisData["verdict"];
+    decisionBasis: ContractAnalysisData["decisionBasis"];
+    evidenceStatus: ContractAnalysisData["evidenceStatus"];
+  };
+  checks: RegressionManifestCheck[];
+};
+
 export type DetectedTool = {
   id: string;
   name: string;
@@ -173,6 +215,7 @@ export type ContractAnalysisData = {
     | "evaluator_consensus"
     | "adjudication"
     | "insufficient_evidence";
+  regression?: RegressionManifestEvaluation;
 };
 
 export const detectedTools: DetectedTool[] = [

@@ -1,4 +1,4 @@
-import { Play } from "lucide-react";
+import { BadgeCheck, BadgeX, CircleHelp, Play } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -54,6 +54,9 @@ const createPendingFinding = (tool: DetectedTool): Finding => {
     severity: "info",
   };
 };
+
+const formatRegressionValue = (value: string) =>
+  value.replaceAll("_", " ");
 
 export const ContractAnalysisSection = ({
   data,
@@ -234,6 +237,69 @@ export const ContractAnalysisSection = ({
                 <li key={fact.id}>{fact.statement}</li>
               ))}
             </ul>
+          )}
+
+          {data.regression && (
+            <article
+              className={`mt-5 rounded-lg border p-4 ${
+                data.regression.status === "matched"
+                  ? "border-emerald-600/30 bg-emerald-600/[0.055]"
+                  : data.regression.status === "mismatched"
+                    ? "border-destructive/30 bg-destructive/[0.055]"
+                    : "border-amber-600/30 bg-amber-600/[0.055]"
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                {data.regression.status === "matched" ? (
+                  <BadgeCheck
+                    className="mt-0.5 size-5 shrink-0 text-emerald-600 dark:text-emerald-400"
+                    aria-hidden="true"
+                  />
+                ) : data.regression.status === "mismatched" ? (
+                  <BadgeX
+                    className="mt-0.5 size-5 shrink-0 text-destructive"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <CircleHelp
+                    className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-400"
+                    aria-hidden="true"
+                  />
+                )}
+                <div className="min-w-0 flex-1">
+                  <h4 className="font-sans font-semibold">
+                    {data.regression.status === "matched"
+                      ? "AgentMart regression check passed"
+                      : data.regression.status === "mismatched"
+                        ? "AgentMart regression check failed"
+                        : "AgentMart tool is not covered"}
+                  </h4>
+                  <p className="mt-1 leading-6 text-muted-foreground">
+                    {data.regression.expectation
+                      ? `Expected ${data.regression.expectation.label.toLowerCase()}; observed ${formatRegressionValue(data.regression.actual.verdict)} using ${formatRegressionValue(data.regression.actual.decisionBasis)}.`
+                      : "This URL is the AgentMart fixture, but this tool has no expectation in the current manifest."}
+                  </p>
+                  <p className="mt-2 font-mono text-muted-foreground">
+                    Manifest {data.regression.manifestVersion} · Fixture {data.regression.fixture.version}
+                  </p>
+                </div>
+              </div>
+
+              {data.regression.checks.length > 0 && (
+                <ul className="mt-4 space-y-2 border-l-2 border-border pl-4">
+                  {data.regression.checks.map((check) => (
+                    <li key={check.id}>
+                      <p className="font-medium">
+                        {check.passed ? "Matched" : "Mismatch"}: {check.label}
+                      </p>
+                      <p className="mt-1 text-muted-foreground">
+                        Expected {formatRegressionValue(check.expected)} · Actual {formatRegressionValue(check.actual)}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </article>
           )}
 
           {data.evaluators.length > 0 && (

@@ -12,6 +12,7 @@ import type {
 
 import type {
   BrowserbaseSessionStatistics,
+  ContractAnalysisData,
   DetectedTool,
   EvidenceScreenshot,
   EvidenceLogEntry,
@@ -22,6 +23,7 @@ import type {
   VerificationStatistics,
 } from "@/features/inspect/components/inspection-data";
 import type { VerificationStreamEvent } from "@/features/inspect/components/inspection-stream";
+import { evaluateAgentMartRegression } from "@/features/inspect/regression/agentmart-regression";
 import type {
   ObservedNetworkEntry,
   ObservedRuntimeError,
@@ -943,8 +945,28 @@ export const runToolVerification = async ({
     recordAiActivity,
     signal,
   );
+  const regression = evaluateAgentMartRegression({
+    targetUrl,
+    toolName: captured.tool.name,
+    analysis,
+  });
+  const completedAnalysis: ContractAnalysisData = regression
+    ? { ...analysis, regression }
+    : analysis;
   const analysisDurationMs = Date.now() - analysisStartedAt;
   throwIfAborted(signal);
+
+  if (regression) {
+    recordOperationalLog(
+      "tooltruth",
+      regression.status === "matched"
+        ? `AgentMart regression manifest ${regression.manifestVersion} matched ${captured.tool.name}.`
+        : regression.status === "mismatched"
+          ? `AgentMart regression manifest ${regression.manifestVersion} did not match ${captured.tool.name}.`
+          : `AgentMart regression manifest ${regression.manifestVersion} does not cover ${captured.tool.name}.`,
+      regression.status === "matched" ? "info" : "warning",
+    );
+  }
 
   const totalDurationMs = Date.now() - startedAt;
   recordOperationalLog(
@@ -976,14 +998,18 @@ export const runToolVerification = async ({
     toolId: selectedTool.id,
     data: captured.evidence,
   });
-  report({ kind: "analysis.ready", toolId: selectedTool.id, data: analysis });
+  report({
+    kind: "analysis.ready",
+    toolId: selectedTool.id,
+    data: completedAnalysis,
+  });
   report({ kind: "probe.completed", toolId: selectedTool.id });
 
   console.info("ToolTruth verification completed", {
     runId,
     probeId,
     tool: captured.tool.name,
-    verdict: analysis.verdict,
+    verdict: completedAnalysis.verdict,
     durationMs: Date.now() - startedAt,
     stateChangeCount: captured.stateChanges.length,
     requestCount: captured.requestCount,
