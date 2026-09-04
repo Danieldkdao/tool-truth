@@ -325,19 +325,6 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
     : [];
   const analysisPanel = selectedTool ? (
     <div className="inspect-analysis min-h-full bg-card">
-      {selectedVerification?.directedTest && (
-        <DirectedVerificationPanel
-          record={selectedVerification}
-          rounds={directedRounds}
-          onSelectRound={(probeId) =>
-            session.focusEvidence({
-              toolId: selectedTool.id,
-              probeId,
-              tab: "Timeline",
-            })
-          }
-        />
-      )}
       <ContractAnalysisSection
         data={selectedVerification?.analysisData ?? null}
         selectedTool={selectedTool}
@@ -345,6 +332,21 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
         isBusy={isBusy}
         error={selectedVerification?.error ?? null}
         exportSource={evidenceReceiptSource}
+        directedVerification={
+          selectedVerification?.directedTest ? (
+            <DirectedVerificationPanel
+              record={selectedVerification}
+              rounds={directedRounds}
+              onSelectRound={(probeId) =>
+                session.focusEvidence({
+                  toolId: selectedTool.id,
+                  probeId,
+                  tab: "Timeline",
+                })
+              }
+            />
+          ) : null
+        }
         onRunVerification={() => void session.startVerification()}
       />
     </div>

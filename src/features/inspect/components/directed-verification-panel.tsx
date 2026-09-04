@@ -1,6 +1,7 @@
 import { ArrowRight, Check, CircleHelp, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { AnalysisCollapsible } from "@/features/inspect/components/analysis-collapsible";
 import type { ToolVerificationRecord } from "@/features/inspect/hooks/use-tool-verification";
 
 type DirectedVerificationPanelProps = {
@@ -74,16 +75,11 @@ export const DirectedVerificationPanel = ({
     (record.status === "running" ? "pending" : "error");
 
   return (
-    <section className="border-b border-border bg-card px-5 py-5">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium text-primary">
-            Directed test · Round {test.round}
-          </p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {summarizeChanges(record, rounds)}
-          </p>
-        </div>
+    <AnalysisCollapsible
+      title={`Directed test · Round ${test.round}`}
+      description={summarizeChanges(record, rounds)}
+    >
+      <div className="flex justify-end">
         <span className="rounded-full border border-border bg-muted/50 px-2.5 py-1 font-mono text-xs text-muted-foreground">
           {test.inputHash.slice(0, 8)}
         </span>
@@ -162,6 +158,6 @@ export const DirectedVerificationPanel = ({
           </article>
         ))}
       </div>
-    </section>
+    </AnalysisCollapsible>
   );
 };
