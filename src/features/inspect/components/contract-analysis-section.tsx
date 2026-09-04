@@ -8,12 +8,14 @@ import {
 } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { EvidenceReceiptExportMenu } from "@/features/inspect/components/evidence-receipt-export-menu";
 import type {
   ContractAnalysisData,
   DetectedTool,
   Finding,
 } from "@/features/inspect/components/inspection-data";
 import type { SectionProgress } from "@/features/inspect/components/inspection-stream";
+import type { EvidenceReceiptSource } from "@/features/inspect/lib/evidence-receipt";
 
 type ContractAnalysisSectionProps = {
   data: ContractAnalysisData | null;
@@ -21,6 +23,7 @@ type ContractAnalysisSectionProps = {
   isRunning: boolean;
   isBusy: boolean;
   error?: string | null;
+  exportSource: EvidenceReceiptSource | null;
   onRunVerification: () => void;
 };
 
@@ -58,6 +61,7 @@ export const ContractAnalysisSection = ({
   isRunning,
   isBusy,
   error,
+  exportSource,
   onRunVerification,
 }: ContractAnalysisSectionProps) => {
   const analysisFindings = data ? Object.values(data.findings) : [];
@@ -376,6 +380,10 @@ export const ContractAnalysisSection = ({
           {data?.suggestedRepair ??
             "A repair recommendation will appear after the observed behavior is compared with the tool contract."}
         </p>
+      </section>
+
+      <section className="border-t border-border px-6 py-5">
+        <EvidenceReceiptExportMenu source={exportSource} />
       </section>
     </aside>
   );

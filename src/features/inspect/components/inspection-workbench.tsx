@@ -34,6 +34,7 @@ import {
 } from "@/features/inspect/components/execution-evidence-section";
 import { InspectionErrorState } from "@/features/inspect/components/inspection-error-state";
 import { useInspectionSessionController } from "@/features/inspect/hooks/use-inspection-session-controller";
+import type { EvidenceReceiptSource } from "@/features/inspect/lib/evidence-receipt";
 import { useMediaQuery } from "@/hooks/use-media-query";
 
 const DESKTOP_WORKBENCH_QUERY = "(min-width: 1024px)";
@@ -279,6 +280,26 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
       />
     );
 
+  const evidenceReceiptSource: EvidenceReceiptSource | null =
+    selectedTool &&
+    selectedVerification?.probeId &&
+    selectedVerification.evidenceData &&
+    selectedVerification.analysisData
+      ? {
+          runId,
+          probeId: selectedVerification.probeId,
+          attempt: selectedVerification.attempt,
+          status: selectedVerification.status,
+          error: selectedVerification.error,
+          selectedTool,
+          discoveredTools: tools ?? [selectedTool],
+          browserData: session.snapshot.browserData,
+          browserSession: selectedVerification.browserSession ?? browserSession,
+          evidence: selectedVerification.evidenceData,
+          analysis: selectedVerification.analysisData,
+        }
+      : null;
+
   const analysisPanel = selectedTool ? (
     <ContractAnalysisSection
       data={selectedVerification?.analysisData ?? null}
@@ -286,6 +307,7 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
       isRunning={selectedVerification?.status === "running"}
       isBusy={isBusy}
       error={selectedVerification?.error ?? null}
+      exportSource={evidenceReceiptSource}
       onRunVerification={() => void session.startVerification()}
     />
   ) : (

@@ -2,6 +2,8 @@ import { serverEnv } from "@/data/env/server";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 
 export const TOOLTRUTH_ANALYSIS_MODEL_ID = "qwen/qwen3.8-flash";
+export const TOOLTRUTH_FALLBACK_MODEL_ID =
+  "deepseek/deepseek-v4-flash-vision-exp";
 export const TOOLTRUTH_SEMANTIC_MODEL_IDS = {
   contractChecker: "qwen/qwen3.8-flash",
   evidenceChecker: "minimax/minimax-m3",

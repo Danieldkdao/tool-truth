@@ -14,8 +14,10 @@ import type {
 } from "@/features/inspect/components/inspection-data";
 import {
   getToolTruthAnalysisModel,
+  TOOLTRUTH_FALLBACK_MODEL_ID,
   TOOLTRUTH_SEMANTIC_MODEL_IDS,
 } from "@/services/ai/models/openrouter";
+import { runWithModelFallback } from "@/services/ai/model-fallback";
 
 const MAX_BODY_TEXT_LENGTH = 8_000;
 const MAX_EVIDENCE_PACKET_LENGTH = 60_000;
@@ -520,8 +522,7 @@ const runEvaluator = async (
   reportActivity: (message: string) => void,
   signal?: AbortSignal,
 ): Promise<SemanticEvaluatorResult> => {
-  const model = getToolTruthAnalysisModel(definition.modelId);
-  if (!model) {
+  if (!getToolTruthAnalysisModel(definition.modelId)) {
     reportActivity(`${definition.evaluator} unavailable because OPENROUTER_API_KEY is not configured`);
     return {
       evaluator: definition.evaluator,
@@ -534,7 +535,12 @@ const runEvaluator = async (
   reportActivity(`Starting ${definition.evaluator} with ${definition.modelId}`);
 
   try {
-    const requestEvaluation = async () => {
+    const requestEvaluation = async (modelId: string) => {
+      const model = getToolTruthAnalysisModel(modelId);
+      if (!model) {
+        throw new Error("The model provider is not configured.");
+      }
+
       const result = await generateText({
         model,
         temperature: 0,
@@ -586,65 +592,74 @@ const runEvaluator = async (
       return normalizeEvaluation(parsed, packet.evidenceIds);
     };
 
-    let evaluation: SemanticEvaluation;
-    try {
-      evaluation = await requestEvaluation();
-    } catch (error) {
-      const isInvalidStructuredOutput =
-        error instanceof InvalidSemanticOutputError;
-      const retryProviderRequest = isRetryableProviderError(error);
-      if (
-        (!isInvalidStructuredOutput && !retryProviderRequest) ||
-        signal?.aborted
-      ) {
-        throw error;
-      }
+    const requestPrimaryEvaluation = async () => {
+      try {
+        return await requestEvaluation(definition.modelId);
+      } catch (error) {
+        const isInvalidStructuredOutput =
+          error instanceof InvalidSemanticOutputError;
+        const retryProviderRequest = isRetryableProviderError(error);
+        if (
+          (!isInvalidStructuredOutput && !retryProviderRequest) ||
+          signal?.aborted
+        ) {
+          throw error;
+        }
 
-      reportActivity(
-        isInvalidStructuredOutput
-          ? `${definition.evaluator} returned invalid structured output (${error.detail}); retrying once`
-          : `${definition.evaluator} provider request failed transiently; retrying once`,
-      );
-      evaluation = await requestEvaluation();
-    }
+        reportActivity(
+          isInvalidStructuredOutput
+            ? `${definition.evaluator} returned an unexpected response; retrying once`
+            : `${definition.evaluator} provider request failed transiently; retrying once`,
+        );
+        return requestEvaluation(definition.modelId);
+      }
+    };
+
+    const generation = await runWithModelFallback({
+      primaryModelId: definition.modelId,
+      fallbackModelId: TOOLTRUTH_FALLBACK_MODEL_ID,
+      signal,
+      onFallback: (fallbackModelId) => {
+        reportActivity(
+          `${definition.evaluator} primary model failed; trying fallback model ${fallbackModelId}`,
+        );
+      },
+      run: (modelId) =>
+        modelId === definition.modelId
+          ? requestPrimaryEvaluation()
+          : requestEvaluation(modelId),
+    });
+    const evaluation = generation.value;
 
     if (signal?.aborted) {
       throw new DOMException("The verification was cancelled.", "AbortError");
     }
 
+    if (generation.usedFallback) {
+      reportActivity(
+        `${definition.evaluator} fallback model completed successfully`,
+      );
+    }
     reportActivity(`${definition.evaluator} completed with ${evaluation.verdict}`);
     return {
       evaluator: definition.evaluator,
-      model: definition.modelId,
+      model: generation.modelId,
       status: "completed",
       evaluation,
     };
-  } catch (error) {
+  } catch {
     if (signal?.aborted) {
       throw new DOMException("The verification was cancelled.", "AbortError");
     }
-    const timedOut = isTimeoutError(error);
-    const invalidStructuredOutput = error instanceof InvalidSemanticOutputError;
-    const providerStatus = getErrorStatus(error);
-    const errorMessage = timedOut
-      ? `The evaluator timed out after ${Math.round(definition.timeoutMs / 1_000)} seconds.`
-      : invalidStructuredOutput
-        ? "The evaluator twice returned output that did not match the required schema."
-        : providerStatus
-          ? `The evaluator provider request failed with HTTP ${providerStatus} before a decision was returned.`
-          : "The evaluator provider request failed before a decision was returned.";
     reportActivity(
-      timedOut
-        ? `${definition.evaluator} timed out after ${Math.round(definition.timeoutMs / 1_000)} seconds`
-        : invalidStructuredOutput
-          ? `${definition.evaluator} returned invalid structured output twice`
-          : `${definition.evaluator} provider request failed`,
+      `${definition.evaluator} failed after primary and fallback model attempts`,
     );
     return {
       evaluator: definition.evaluator,
       model: definition.modelId,
       status: "failed",
-      error: errorMessage,
+      error:
+        "The evaluator failed with both its primary and fallback models before a decision was returned.",
     };
   }
 };
@@ -675,8 +690,7 @@ const runAdjudicator = async (
   reportActivity: (message: string) => void,
   signal?: AbortSignal,
 ): Promise<SemanticEvaluation | undefined> => {
-  const model = getToolTruthAnalysisModel(adjudicatorDefinition.modelId);
-  if (!model) {
+  if (!getToolTruthAnalysisModel(adjudicatorDefinition.modelId)) {
     reportActivity(
       "Adjudication unavailable because OPENROUTER_API_KEY is not configured",
     );
@@ -694,7 +708,12 @@ const runAdjudicator = async (
   );
 
   try {
-    const requestAdjudication = async () => {
+    const requestAdjudication = async (modelId: string) => {
+      const model = getToolTruthAnalysisModel(modelId);
+      if (!model) {
+        throw new Error("The model provider is not configured.");
+      }
+
       const result = await generateText({
         model,
         temperature: 0,
@@ -748,48 +767,60 @@ const runAdjudicator = async (
       return normalizeEvaluation(parsed, packet.evidenceIds);
     };
 
-    let adjudication: SemanticEvaluation;
-    try {
-      adjudication = await requestAdjudication();
-    } catch (error) {
-      const isInvalidStructuredOutput =
-        error instanceof InvalidSemanticOutputError;
-      const retryProviderRequest = isRetryableProviderError(error);
-      if (
-        (!isInvalidStructuredOutput && !retryProviderRequest) ||
-        signal?.aborted
-      ) {
-        throw error;
-      }
+    const requestPrimaryAdjudication = async () => {
+      try {
+        return await requestAdjudication(adjudicatorDefinition.modelId);
+      } catch (error) {
+        const isInvalidStructuredOutput =
+          error instanceof InvalidSemanticOutputError;
+        const retryProviderRequest = isRetryableProviderError(error);
+        if (
+          (!isInvalidStructuredOutput && !retryProviderRequest) ||
+          signal?.aborted
+        ) {
+          throw error;
+        }
 
-      reportActivity(
-        isInvalidStructuredOutput
-          ? `Adjudicator returned invalid structured output (${error.detail}); retrying once`
-          : "Adjudicator provider request failed transiently; retrying once",
-      );
-      adjudication = await requestAdjudication();
-    }
+        reportActivity(
+          isInvalidStructuredOutput
+            ? "Adjudicator returned an unexpected response; retrying once"
+            : "Adjudicator provider request failed transiently; retrying once",
+        );
+        return requestAdjudication(adjudicatorDefinition.modelId);
+      }
+    };
+
+    const generation = await runWithModelFallback({
+      primaryModelId: adjudicatorDefinition.modelId,
+      fallbackModelId: TOOLTRUTH_FALLBACK_MODEL_ID,
+      signal,
+      onFallback: (fallbackModelId) => {
+        reportActivity(
+          `Adjudicator primary model failed; trying fallback model ${fallbackModelId}`,
+        );
+      },
+      run: (modelId) =>
+        modelId === adjudicatorDefinition.modelId
+          ? requestPrimaryAdjudication()
+          : requestAdjudication(modelId),
+    });
+    const adjudication = generation.value;
 
     if (signal?.aborted) {
       throw new DOMException("The verification was cancelled.", "AbortError");
     }
 
+    if (generation.usedFallback) {
+      reportActivity("Adjudicator fallback model completed successfully");
+    }
     reportActivity(`Conditional adjudication completed with ${adjudication.verdict}`);
     return adjudication;
-  } catch (error) {
+  } catch {
     if (signal?.aborted) {
       throw new DOMException("The verification was cancelled.", "AbortError");
     }
 
-    const timedOut = isTimeoutError(error);
-    const invalidStructuredOutput = error instanceof InvalidSemanticOutputError;
-    reportActivity(
-      timedOut
-        ? `Adjudicator timed out after ${Math.round(adjudicatorDefinition.timeoutMs / 1_000)} seconds`
-        : invalidStructuredOutput
-          ? "Adjudicator returned invalid structured output twice"
-          : "Adjudicator provider request failed",
-    );
+    reportActivity("Adjudicator failed after primary and fallback model attempts");
     return undefined;
   }
 };
