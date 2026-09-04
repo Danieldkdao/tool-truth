@@ -3,10 +3,15 @@ import "server-only";
 import { randomBytes } from "node:crypto";
 
 import type {
+  ContractAnalysisData,
   DetectedTool,
+  DirectedTestDefinition,
+  DirectedTestEvaluation,
   EvidenceScreenshot,
+  ExecutionEvidenceData,
 } from "@/features/inspect/components/inspection-data";
 import type { VerificationStreamEvent } from "@/features/inspect/components/inspection-stream";
+import { resolveDirectedLineage } from "@/features/inspect/lib/directed-verification";
 import type {
   BrowserbaseSessionLifecycle,
   BrowserbaseSessionLifecycleReporter,
@@ -22,8 +27,14 @@ const MAX_SCREENSHOTS_PER_PROBE = 2;
 const MAX_SCREENSHOT_BYTES = 1_000_000;
 const MAX_SCREENSHOT_BYTES_PER_RUN = 40_000_000;
 const MAX_SCREENSHOT_BYTES_GLOBALLY = 256_000_000;
+const PROBE_DISCONNECT_GRACE_MS = 15_000;
 
-type ProbeSubscriber = (event: VerificationStreamEvent) => void;
+export type StoredVerificationEvent = {
+  sequence: number;
+  event: VerificationStreamEvent;
+};
+
+type ProbeSubscriber = (event: StoredVerificationEvent) => void;
 
 export type RetainedInspectionScreenshot = {
   id: string;
@@ -43,12 +54,20 @@ export type RetainInspectionScreenshotInput = Pick<
 export type InspectionProbe = {
   id: string;
   toolId: string;
-  status: "queued" | "running" | "completed" | "failed";
+  status: "queued" | "running" | "completed" | "failed" | "canceled";
   createdAt: number;
-  events: VerificationStreamEvent[];
+  events: StoredVerificationEvent[];
+  nextEventSequence: number;
   subscribers: Set<ProbeSubscriber>;
+  directedTest?: DirectedTestDefinition;
+  directedEvaluation?: DirectedTestEvaluation;
+  verifiedTool?: DetectedTool;
+  evidenceData?: ExecutionEvidenceData;
+  analysisData?: ContractAnalysisData;
+  failureMessage?: string;
   execution?: Promise<void>;
   abortController?: AbortController;
+  disconnectExpiration?: NodeJS.Timeout;
   browserSession?: Promise<InspectionBrowserSession>;
   browserbaseLifecycleId?: string;
   screenshots: Map<string, RetainedInspectionScreenshot>;
@@ -141,6 +160,10 @@ const closeProbeBrowserSession = async (
 };
 
 export const cancelInspectionProbe = (probe: InspectionProbe) => {
+  if (probe.disconnectExpiration) {
+    clearTimeout(probe.disconnectExpiration);
+    probe.disconnectExpiration = undefined;
+  }
   probe.abortController?.abort();
 };
 
@@ -383,7 +406,19 @@ export const getOrCreateToolDiscovery = (
   return run.toolDiscovery;
 };
 
-export const createInspectionProbe = (run: InspectionRun, toolId: string) => {
+const createProbeId = (run: InspectionRun) => {
+  let probeId: string;
+  do {
+    probeId = `probe_${randomBytes(18).toString("base64url")}`;
+  } while (run.probes.has(probeId));
+  return probeId;
+};
+
+export const createInspectionProbe = (
+  run: InspectionRun,
+  toolId: string,
+  probeId = createProbeId(run),
+) => {
   run.probes ??= new Map();
 
   if (run.probes.size >= MAX_PROBES_PER_RUN) {
@@ -399,16 +434,56 @@ export const createInspectionProbe = (run: InspectionRun, toolId: string) => {
   }
 
   const probe: InspectionProbe = {
-    id: `probe_${randomBytes(18).toString("base64url")}`,
+    id: probeId,
     toolId,
     status: "queued",
     createdAt: Date.now(),
     events: [],
+    nextEventSequence: 1,
     subscribers: new Set(),
     screenshots: new Map(),
   };
 
   run.probes.set(probe.id, probe);
+  return probe;
+};
+
+export class DirectedProbeLineageError extends Error {
+  readonly status = 409;
+}
+
+export type DirectedProbeDraft = Omit<
+  DirectedTestDefinition,
+  "parentProbeId" | "rootProbeId" | "round"
+> & {
+  basedOnProbeId?: string;
+};
+
+export const createDirectedInspectionProbe = (
+  run: InspectionRun,
+  toolId: string,
+  draft: DirectedProbeDraft,
+) => {
+  const probeId = createProbeId(run);
+  const lineage = resolveDirectedLineage(
+    [...run.probes.values()],
+    toolId,
+    probeId,
+    draft.basedOnProbeId,
+  );
+  if (!lineage.ok) {
+    throw new DirectedProbeLineageError(lineage.message);
+  }
+  const probe = createInspectionProbe(run, toolId, probeId);
+  probe.directedTest = {
+    request: draft.request,
+    input: draft.input,
+    inputHash: draft.inputHash,
+    assertions: draft.assertions,
+    parentProbeId: lineage.parentProbeId,
+    rootProbeId: lineage.rootProbeId,
+    round: lineage.round,
+  };
   return probe;
 };
 
@@ -421,21 +496,55 @@ export const publishInspectionProbeEvent = (
   probe: InspectionProbe,
   event: VerificationStreamEvent,
 ) => {
-  probe.events.push(event);
+  const storedEvent = {
+    sequence: probe.nextEventSequence,
+    event,
+  } satisfies StoredVerificationEvent;
+  probe.nextEventSequence += 1;
+  probe.events.push(storedEvent);
 
+  if (event.kind === "tool.ready") probe.verifiedTool = event.data;
+  if (event.kind === "evidence.ready") probe.evidenceData = event.data;
+  if (event.kind === "analysis.ready") probe.analysisData = event.data;
+  if (event.kind === "directed.ready") probe.directedEvaluation = event.data;
   if (event.kind === "probe.completed") probe.status = "completed";
-  if (event.kind === "probe.failed") probe.status = "failed";
+  if (event.kind === "probe.failed") {
+    probe.status = "failed";
+    probe.failureMessage = event.message;
+  }
+  if (event.kind === "probe.canceled") {
+    probe.status = "canceled";
+    probe.failureMessage = event.message;
+  }
 
-  for (const subscriber of probe.subscribers) subscriber(event);
+  for (const subscriber of probe.subscribers) subscriber(storedEvent);
+  return storedEvent;
 };
 
 export const subscribeToInspectionProbe = (
   probe: InspectionProbe,
   subscriber: ProbeSubscriber,
 ) => {
+  if (probe.disconnectExpiration) {
+    clearTimeout(probe.disconnectExpiration);
+    probe.disconnectExpiration = undefined;
+  }
   probe.subscribers.add(subscriber);
   return () => {
     probe.subscribers.delete(subscriber);
+    if (
+      probe.subscribers.size === 0 &&
+      probe.status === "running" &&
+      !probe.disconnectExpiration
+    ) {
+      probe.disconnectExpiration = setTimeout(() => {
+        probe.disconnectExpiration = undefined;
+        if (probe.subscribers.size === 0 && probe.status === "running") {
+          cancelInspectionProbe(probe);
+        }
+      }, PROBE_DISCONNECT_GRACE_MS);
+      probe.disconnectExpiration.unref?.();
+    }
   };
 };
 

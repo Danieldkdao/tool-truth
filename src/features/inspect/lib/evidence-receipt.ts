@@ -2,10 +2,16 @@ import type {
   BrowserPreviewData,
   ContractAnalysisData,
   DetectedTool,
+  DirectedTestDefinition,
+  DirectedTestEvaluation,
   ExecutionEvidenceData,
   ToolVerificationStatus,
 } from "@/features/inspect/components/inspection-data";
 import type { BrowserSessionView } from "@/features/inspect/components/inspection-stream";
+import {
+  sanitizeDirectedAssertion,
+  sanitizeDirectedEvaluation,
+} from "./directed-redaction.ts";
 import {
   REDACTED_VALUE,
   sanitizeForExport,
@@ -28,10 +34,12 @@ export type EvidenceReceiptSource = {
   browserSession: BrowserSessionView | null;
   evidence: ExecutionEvidenceData;
   analysis: ContractAnalysisData;
+  directedTest?: DirectedTestDefinition | null;
+  directedEvaluation?: DirectedTestEvaluation | null;
 };
 
 export type EvidenceReceipt = {
-  schemaVersion: "1.0";
+  schemaVersion: "1.1";
   generatedAt: string;
   generator: {
     name: "ToolTruth";
@@ -60,6 +68,15 @@ export type EvidenceReceipt = {
     error: SafeJsonValue;
     analysis: SafeJsonObject;
     evidence: SafeJsonObject;
+  };
+  collaboration?: {
+    request: SafeJsonValue;
+    input: SafeJsonObject;
+    inputHash: string;
+    assertions: SafeJsonValue;
+    directedEvaluation: SafeJsonValue;
+    parentProbeId: string | null;
+    round: number;
   };
 };
 
@@ -105,7 +122,7 @@ export const createEvidenceReceipt = (
   generatedAt = new Date(),
 ): EvidenceReceipt => {
   return {
-    schemaVersion: "1.0",
+    schemaVersion: "1.1",
     generatedAt: generatedAt.toISOString(),
     generator: {
       name: "ToolTruth",
@@ -145,6 +162,21 @@ export const createEvidenceReceipt = (
       analysis: sanitizeObjectForExport(source.analysis),
       evidence: createSafeEvidence(source.evidence),
     },
+    collaboration: source.directedTest
+      ? {
+          request: sanitizeForExport(source.directedTest.request),
+          input: sanitizeObjectForExport(source.directedTest.input),
+          inputHash: source.directedTest.inputHash,
+          assertions: source.directedTest.assertions.map(
+            sanitizeDirectedAssertion,
+          ),
+          directedEvaluation: source.directedEvaluation
+            ? sanitizeDirectedEvaluation(source.directedEvaluation)
+            : null,
+          parentProbeId: source.directedTest.parentProbeId,
+          round: source.directedTest.round,
+        }
+      : undefined,
   };
 };
 

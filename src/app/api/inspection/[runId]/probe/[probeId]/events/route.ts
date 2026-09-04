@@ -1,11 +1,15 @@
 import type { VerificationStreamEvent } from "@/features/inspect/components/inspection-stream";
 import {
+  sanitizeDirectedEvaluation,
+  sanitizeDirectedTest,
+} from "@/features/inspect/lib/directed-redaction";
+import { eventsAfterSequence } from "@/features/inspect/lib/verification-event-order";
+import {
   InspectionBrowserSessionUnavailableError,
   openInspectionBrowserSession,
   toBrowserSessionView,
 } from "@/features/inspect/server/inspection-browser-session";
 import {
-  cancelInspectionProbe,
   disposeInspectionProbeBrowserSession,
   getInspectionProbe,
   getInspectionRun,
@@ -32,7 +36,11 @@ const encodeEvent = (
 };
 
 const isTerminalEvent = (event: VerificationStreamEvent) => {
-  return event.kind === "probe.completed" || event.kind === "probe.failed";
+  return (
+    event.kind === "probe.completed" ||
+    event.kind === "probe.failed" ||
+    event.kind === "probe.canceled"
+  );
 };
 
 const isAbortError = (error: unknown) => {
@@ -61,7 +69,15 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
   }
 
   const encoder = new TextEncoder();
-  let eventId = 0;
+  const querySequence = Number(
+    new URL(request.url).searchParams.get("after") ?? "0",
+  );
+  const headerSequence = Number(request.headers.get("last-event-id") ?? "0");
+  const afterSequence = Math.max(
+    Number.isSafeInteger(querySequence) ? querySequence : 0,
+    Number.isSafeInteger(headerSequence) ? headerSequence : 0,
+    0,
+  );
   let closed = false;
   let unsubscribe: () => void = () => undefined;
 
@@ -73,28 +89,46 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
         unsubscribe();
         controller.close();
       };
-      const send = (event: VerificationStreamEvent) => {
+      const send = (sequence: number, event: VerificationStreamEvent) => {
         if (closed) return;
-        eventId += 1;
-        controller.enqueue(encodeEvent(encoder, eventId, event));
+        controller.enqueue(encodeEvent(encoder, sequence, event));
         if (isTerminalEvent(event)) close();
       };
 
       controller.enqueue(
         encoder.encode("retry: 1500\n: verification stream ready\n\n"),
       );
-      send({
+      send(afterSequence, {
         kind: "probe.connected",
         probeId: probe.id,
         toolId: probe.toolId,
       });
 
-      for (const event of probe.events) {
-        send(event);
+      for (const storedEvent of eventsAfterSequence(
+        probe.events,
+        afterSequence,
+      )) {
+        send(storedEvent.sequence, storedEvent.event);
         if (closed) return;
       }
 
-      unsubscribe = subscribeToInspectionProbe(probe, send);
+      unsubscribe = subscribeToInspectionProbe(
+        probe,
+        (storedEvent) => send(storedEvent.sequence, storedEvent.event),
+      );
+
+      if (
+        probe.directedTest &&
+        !probe.events.some(
+          (storedEvent) => storedEvent.event.kind === "directed.started",
+        )
+      ) {
+        publishInspectionProbeEvent(probe, {
+          kind: "directed.started",
+          toolId: probe.toolId,
+          data: sanitizeDirectedTest(probe.directedTest),
+        });
+      }
 
       void getOrStartInspectionProbe(probe, async (signal) => {
         const runWithDisposableBrowser = async () => {
@@ -136,11 +170,23 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
               probeId: probe.id,
               targetUrl: run.targetUrl,
               selectedTool,
+              inputSource: probe.directedTest
+                ? { kind: "directed", test: probe.directedTest }
+                : { kind: "generated" },
               browserSession: await browserSession,
               releaseBrowser: () =>
                 disposeInspectionProbeBrowserSession(probe, browserSession),
               signal,
-              report: (event) => publishInspectionProbeEvent(probe, event),
+              report: (event) =>
+                publishInspectionProbeEvent(
+                  probe,
+                  event.kind === "directed.ready"
+                    ? {
+                        ...event,
+                        data: sanitizeDirectedEvaluation(event.data),
+                      }
+                    : event,
+                ),
               retainScreenshot: (screenshot) =>
                 retainInspectionProbeScreenshot(run, probe, screenshot),
             });
@@ -170,7 +216,8 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
             await runWithDisposableBrowser();
           }
         } catch (error) {
-          if (!isAbortError(error)) {
+          const wasCanceled = signal.aborted || isAbortError(error);
+          if (!wasCanceled) {
             console.error("ToolTruth verification failed", {
               runId: run.id,
               probeId: probe.id,
@@ -178,29 +225,34 @@ export const GET = async (request: Request, { params }: ProbeParams) => {
               error,
             });
           }
-          publishInspectionProbeEvent(probe, {
-            kind: "probe.failed",
-            toolId: probe.toolId,
-            message:
-              isAbortError(error)
-                ? "The verification was cancelled."
-                : error instanceof Error
-                ? error.message
-                : "The verification could not be completed.",
-          });
+          publishInspectionProbeEvent(
+            probe,
+            wasCanceled
+              ? {
+                  kind: "probe.canceled",
+                  toolId: probe.toolId,
+                  message: "The verification was canceled.",
+                }
+              : {
+                  kind: "probe.failed",
+                  toolId: probe.toolId,
+                  message:
+                    error instanceof Error
+                      ? error.message
+                      : "The verification could not be completed.",
+                },
+          );
         }
       });
 
       request.signal.addEventListener("abort", () => {
         closed = true;
         unsubscribe();
-        cancelInspectionProbe(probe);
       });
     },
     cancel: () => {
       closed = true;
       unsubscribe();
-      cancelInspectionProbe(probe);
     },
   });
 

@@ -26,6 +26,7 @@ import {
   DetectedToolsSectionProgress,
   DetectedToolsSectionSkeleton,
 } from "@/features/inspect/components/detected-tools-section";
+import { DirectedVerificationPanel } from "@/features/inspect/components/directed-verification-panel";
 import {
   ExecutionEvidenceSectionEmpty,
   ExecutionEvidenceSection,
@@ -169,6 +170,8 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
     activeEvidenceTab,
     selectedVerification,
     verificationRecords,
+    recordsByProbeId,
+    probeOrderByToolId,
     verificationStatuses,
     isBusy,
     isRunningAll,
@@ -213,6 +216,8 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
               ? "Verification passed"
               : status === "inconclusive"
                 ? "Verification inconclusive"
+              : status === "canceled"
+                ? "Verification canceled"
               : status === "failed"
                 ? "Verification failed"
                 : status === "error"
@@ -303,19 +308,46 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
           browserSession: selectedVerification.browserSession ?? browserSession,
           evidence: selectedVerification.evidenceData,
           analysis: selectedVerification.analysisData,
+          directedTest: selectedVerification.directedTest,
+          directedEvaluation: selectedVerification.directedEvaluation,
         }
       : null;
 
+  const directedRounds = selectedToolId
+    ? (probeOrderByToolId[selectedToolId] ?? [])
+        .map((probeId) => recordsByProbeId[probeId])
+        .filter((record) => Boolean(record?.directedTest))
+        .sort(
+          (left, right) =>
+            (left.directedTest?.round ?? 0) -
+            (right.directedTest?.round ?? 0),
+        )
+    : [];
   const analysisPanel = selectedTool ? (
-    <ContractAnalysisSection
-      data={selectedVerification?.analysisData ?? null}
-      selectedTool={selectedTool}
-      isRunning={selectedVerification?.status === "running"}
-      isBusy={isBusy}
-      error={selectedVerification?.error ?? null}
-      exportSource={evidenceReceiptSource}
-      onRunVerification={() => void session.startVerification()}
-    />
+    <div className="inspect-analysis min-h-full bg-card">
+      {selectedVerification?.directedTest && (
+        <DirectedVerificationPanel
+          record={selectedVerification}
+          rounds={directedRounds}
+          onSelectRound={(probeId) =>
+            session.focusEvidence({
+              toolId: selectedTool.id,
+              probeId,
+              tab: "Timeline",
+            })
+          }
+        />
+      )}
+      <ContractAnalysisSection
+        data={selectedVerification?.analysisData ?? null}
+        selectedTool={selectedTool}
+        isRunning={selectedVerification?.status === "running"}
+        isBusy={isBusy}
+        error={selectedVerification?.error ?? null}
+        exportSource={evidenceReceiptSource}
+        onRunVerification={() => void session.startVerification()}
+      />
+    </div>
   ) : (
     <ContractAnalysisSectionProgress progress={progress.analysis} />
   );

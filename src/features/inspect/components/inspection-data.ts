@@ -6,7 +6,88 @@ export type ToolVerificationStatus =
   | "passed"
   | "failed"
   | "inconclusive"
+  | "canceled"
   | "error";
+
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+export type DirectedAssertion =
+  | {
+      kind: "invocation_status";
+      expected: "completed" | "error";
+    }
+  | { kind: "no_mutating_requests" }
+  | { kind: "no_observable_state_changes" }
+  | { kind: "no_persistent_state_changes" }
+  | { kind: "no_navigation" }
+  | { kind: "same_input_is_idempotent" }
+  | {
+      kind: "output_field_exists";
+      path: string[];
+    }
+  | {
+      kind: "output_field_equals";
+      path: string[];
+      expected: JsonValue;
+    };
+
+export type DirectedVerificationRequest = {
+  toolId: string;
+  request: string;
+  input: Record<string, JsonValue>;
+  assertions: DirectedAssertion[];
+  basedOnProbeId?: string;
+};
+
+export type DirectedAssertionCheck = {
+  assertion: DirectedAssertion;
+  status: "satisfied" | "violated" | "inconclusive";
+  explanation: string;
+  evidenceIds: string[];
+};
+
+export type DirectedTestEvaluation = {
+  verdict: "passed" | "failed" | "inconclusive" | "not_run";
+  checks: DirectedAssertionCheck[];
+};
+
+export type DirectedVerificationResult = {
+  status: "completed" | "validation_error" | "error" | "canceled";
+  runId?: string;
+  probeId?: string;
+  parentProbeId?: string | null;
+  round?: number;
+  test: {
+    request: string;
+    input: Record<string, JsonValue>;
+    inputHash: string;
+    assertions: DirectedAssertion[];
+  };
+  directedTest?: DirectedTestEvaluation;
+  contract?: Pick<
+    ContractAnalysisData,
+    "verdict" | "decisionBasis" | "evidenceStatus"
+  >;
+  evidence?: ExecutionEvidenceData;
+  validationIssues?: Array<{ path: string; message: string }>;
+  error?: string;
+};
+
+export type DirectedTestDefinition = {
+  request: string;
+  input: Record<string, JsonValue>;
+  inputHash: string;
+  assertions: DirectedAssertion[];
+  parentProbeId: string | null;
+  rootProbeId: string;
+  round: number;
+};
 
 export type EvidenceTab =
   | "Timeline"

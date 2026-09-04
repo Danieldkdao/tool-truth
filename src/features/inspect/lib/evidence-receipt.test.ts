@@ -266,6 +266,48 @@ test("creates filesystem-safe, format-specific filenames", () => {
   );
 });
 
+test("adds redacted collaboration data only for directed probes", () => {
+  const automaticReceipt = createEvidenceReceipt(createSource());
+  assert.equal(automaticReceipt.schemaVersion, "1.1");
+  assert.equal(automaticReceipt.collaboration, undefined);
+
+  const source = createSource();
+  source.directedTest = {
+    request: "Check owner@example.com without mutation",
+    input: { email: "owner@example.com", productId: "headphones-01" },
+    inputHash: "input-hash",
+    assertions: [
+      { kind: "no_mutating_requests" },
+      {
+        kind: "output_field_equals",
+        path: ["password"],
+        expected: "hunter2",
+      },
+    ],
+    parentProbeId: null,
+    rootProbeId: "probe-public-456",
+    round: 1,
+  };
+  source.directedEvaluation = {
+    verdict: "failed",
+    checks: [
+      {
+        assertion: { kind: "no_mutating_requests" },
+        status: "violated",
+        explanation: "A mutation was observed for owner@example.com.",
+        evidenceIds: ["network"],
+      },
+    ],
+  };
+
+  const directedReceipt = createEvidenceReceipt(source);
+  const serialized = serializeEvidenceReceiptJson(directedReceipt);
+  assert.equal(directedReceipt.collaboration?.round, 1);
+  assert.match(serialized, /"collaboration"/);
+  assert.doesNotMatch(serialized, /owner@example\.com/);
+  assert.match(serialized, /\[REDACTED\]/);
+});
+
 test("keeps ordinary text unchanged while redacting credentials", () => {
   assert.equal(redactSensitiveText("No observable state changes"), "No observable state changes");
   assert.equal(
