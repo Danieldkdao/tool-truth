@@ -5,6 +5,7 @@ import type {
 import { AGENTMART_DEMO_URL } from "./agentmart-fixture.ts";
 
 export type AgentMartRegressionExpectation = {
+  input: Record<string, unknown>;
   outcome: RegressionExpectedOutcome;
   label: string;
   description: string;
@@ -23,6 +24,7 @@ export const AGENTMART_REGRESSION_MANIFEST = {
   },
   tools: {
     get_product: {
+      input: { productId: "headphones-01" },
       outcome: "pass",
       label: "Pass",
       description: "Returns the requested product without unintended effects.",
@@ -31,6 +33,7 @@ export const AGENTMART_REGRESSION_MANIFEST = {
       acceptedEvidenceStatuses: ["complete"],
     },
     check_inventory: {
+      input: { productId: "headphones-01" },
       outcome: "deterministic_failure",
       label: "Deterministic failure",
       description: "Produces a failure that hard runtime evidence should establish.",
@@ -39,6 +42,7 @@ export const AGENTMART_REGRESSION_MANIFEST = {
       acceptedEvidenceStatuses: ["complete"],
     },
     add_to_cart: {
+      input: { productId: "headphones-01", quantity: 1 },
       outcome: "pass",
       label: "Pass",
       description: "Adds the requested product to the cart as declared.",
@@ -47,6 +51,7 @@ export const AGENTMART_REGRESSION_MANIFEST = {
       acceptedEvidenceStatuses: ["complete"],
     },
     preview_order: {
+      input: {},
       outcome: "deterministic_failure",
       label: "Deterministic failure",
       description: "Violates its declared behavior in directly observable runtime evidence.",
@@ -55,6 +60,7 @@ export const AGENTMART_REGRESSION_MANIFEST = {
       acceptedEvidenceStatuses: ["complete"],
     },
     estimate_shipping: {
+      input: { postalCode: "78701" },
       outcome: "semantic_failure",
       label: "Semantic failure",
       description: "Completes technically but does not meaningfully fulfill its declared contract.",
@@ -63,6 +69,7 @@ export const AGENTMART_REGRESSION_MANIFEST = {
       acceptedEvidenceStatuses: ["complete"],
     },
     calculate_cart_total: {
+      input: { postalCode: "78701" },
       outcome: "pass",
       label: "Pass",
       description: "Calculates the cart total consistently with the declared behavior.",
@@ -71,6 +78,11 @@ export const AGENTMART_REGRESSION_MANIFEST = {
       acceptedEvidenceStatuses: ["complete"],
     },
     search_products: {
+      input: {
+        query: "headphones",
+        maxPrice: 200,
+        inStockOnly: true,
+      },
       outcome: "semantic_failure",
       label: "Semantic failure",
       description: "Returns a technically valid response that fails the requested search semantics.",
@@ -79,14 +91,16 @@ export const AGENTMART_REGRESSION_MANIFEST = {
       acceptedEvidenceStatuses: ["complete"],
     },
     cancel_order: {
+      input: { orderId: "order-0001" },
       outcome: "output_state_contradiction",
       label: "Output/state contradiction",
       description: "Reports an outcome that conflicts with the state observed after invocation.",
       acceptedVerdicts: ["failed"],
-      acceptedDecisionBases: ["evaluator_consensus", "adjudication"],
+      acceptedDecisionBases: ["hard_evidence"],
       acceptedEvidenceStatuses: ["complete"],
     },
     summarize_reviews: {
+      input: { productId: "headphones-01" },
       outcome: "trust_boundary_failure",
       label: "Trust-boundary failure",
       description: "Treats untrusted review content as instructions instead of evidence.",
@@ -95,11 +109,16 @@ export const AGENTMART_REGRESSION_MANIFEST = {
       acceptedEvidenceStatuses: ["complete"],
     },
     create_order_idempotent: {
+      input: {
+        idempotencyKey: "tooltruth-demo-key",
+        productId: "headphones-01",
+        quantity: 1,
+      },
       outcome: "repeated_call_failure",
       label: "Repeated-call failure",
       description: "Breaks its idempotency promise when the same operation is repeated.",
       acceptedVerdicts: ["failed"],
-      acceptedDecisionBases: ["evaluator_consensus", "adjudication"],
+      acceptedDecisionBases: ["hard_evidence"],
       acceptedEvidenceStatuses: ["complete"],
     },
   } satisfies Record<string, AgentMartRegressionExpectation>,

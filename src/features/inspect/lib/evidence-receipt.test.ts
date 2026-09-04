@@ -6,9 +6,9 @@ import {
   createEvidenceReceiptFilename,
   serializeEvidenceReceiptJson,
   type EvidenceReceiptSource,
-} from "./evidence-receipt";
-import { serializeEvidenceReceiptMarkdown } from "./evidence-receipt-markdown";
-import { REDACTED_VALUE, redactSensitiveText } from "./report-redaction";
+} from "./evidence-receipt.ts";
+import { serializeEvidenceReceiptMarkdown } from "./evidence-receipt-markdown.ts";
+import { REDACTED_VALUE, redactSensitiveText } from "./report-redaction.ts";
 
 const SECRET_VALUES = [
   "hunter2",
@@ -107,6 +107,7 @@ const createSource = (): EvidenceReceiptSource => {
         discoveryDurationMs: 200,
         navigationDurationMs: 300,
         invocationDurationMs: 400,
+        invocationCount: 1,
         analysisDurationMs: 500,
         totalDurationMs: 1_500,
         toolCount: 1,
@@ -149,6 +150,15 @@ const createSource = (): EvidenceReceiptSource => {
       deterministic: {
         hardVerdict: "failed",
         facts: [{ id: "state_1", statement: "Persistent state changed." }],
+        violations: [
+          {
+            id: "readonly_mutation",
+            title: "A read-only tool changed observable state",
+            statement: "Persistent state changed.",
+            suggestedRepair: "Remove the side effect.",
+            evidenceIds: ["state_1"],
+          },
+        ],
       },
       evaluators: [
         {

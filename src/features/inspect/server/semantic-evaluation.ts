@@ -12,6 +12,10 @@ import type {
   StateChange,
   TimelineEntry,
 } from "@/features/inspect/components/inspection-data";
+import type {
+  DeterministicNetworkRequest,
+  RepeatedInvocationEvidence,
+} from "@/features/inspect/server/deterministic-hard-rules";
 import {
   getToolTruthAnalysisModel,
   TOOLTRUTH_FALLBACK_MODEL_ID,
@@ -152,6 +156,10 @@ export type SemanticAnalysisInput = {
   mutatingRequests: string[];
   runtimeLogs: EvidenceLogEntry[];
   timeline: TimelineEntry[];
+  networkRequests: DeterministicNetworkRequest[];
+  forbiddenDestinationRequests: string[];
+  repeatedInvocation?: RepeatedInvocationEvidence;
+  evidenceComplete: boolean;
 };
 
 type SemanticConsensus = {
@@ -342,6 +350,7 @@ const createEvidencePacket = (input: SemanticAnalysisInput) => {
         name: input.tool.name,
         description: input.tool.description,
         inputSchema: input.tool.inputSchema ?? null,
+        outputSchema: input.tool.outputSchema ?? null,
         annotations: input.tool.annotations ?? {},
       },
     },
@@ -382,6 +391,9 @@ const createEvidencePacket = (input: SemanticAnalysisInput) => {
       data: {
         confirmedMutatingRequests: input.mutatingRequests,
         observableStateChangeCount: input.stateChanges.length,
+        networkRequests: input.networkRequests,
+        forbiddenDestinationRequests: input.forbiddenDestinationRequests,
+        evidenceComplete: input.evidenceComplete,
       },
     },
     {
@@ -415,7 +427,16 @@ const createEvidencePacket = (input: SemanticAnalysisInput) => {
       data: { time, event, detail },
     })),
   ];
+  if (input.repeatedInvocation) {
+    candidates.splice(CORE_EVIDENCE_ITEM_COUNT, 0, {
+      id: "repeated_invocation",
+      kind: "repeated_invocation",
+      data: input.repeatedInvocation,
+    });
+  }
   const evidence: EvidenceItem[] = [];
+  const coreEvidenceItemCount =
+    CORE_EVIDENCE_ITEM_COUNT + (input.repeatedInvocation ? 1 : 0);
   let retainedLength = 0;
   let evidenceStatus: SemanticConsensus["evidenceStatus"] = "complete";
 
@@ -435,7 +456,7 @@ const createEvidencePacket = (input: SemanticAnalysisInput) => {
     };
     const candidateLength = JSON.stringify(safeCandidate).length;
     if (
-      evidence.length >= CORE_EVIDENCE_ITEM_COUNT &&
+      evidence.length >= coreEvidenceItemCount &&
       retainedLength + candidateLength > MAX_EVIDENCE_ITEMS_LENGTH
     ) {
       evidenceStatus = "partial";

@@ -4,6 +4,7 @@ import test from "node:test";
 import type { ContractAnalysisData } from "../components/inspection-data.ts";
 import {
   evaluateAgentMartRegression,
+  getAgentMartRegressionInput,
   isAgentMartDemoUrl,
 } from "./agentmart-regression.ts";
 
@@ -32,6 +33,20 @@ test("identifies only the exact trusted AgentMart HTTPS origin", () => {
   assert.equal(
     isAgentMartDemoUrl("https://user:password@tooltruth-agentmart.vercel.app"),
     false,
+  );
+});
+
+test("returns the versioned safe input for a covered AgentMart scenario", () => {
+  assert.deepEqual(
+    getAgentMartRegressionInput(
+      "https://tooltruth-agentmart.vercel.app",
+      "get_product",
+    ),
+    { productId: "headphones-01" },
+  );
+  assert.equal(
+    getAgentMartRegressionInput("https://example.com", "get_product"),
+    null,
   );
 });
 

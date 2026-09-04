@@ -146,7 +146,7 @@ export const ContractAnalysisSection = ({
                   ? "The tool invocation did not complete successfully, so deterministic evidence ended the verification."
                 : verdict === "failed"
                   ? data?.decisionBasis === "hard_evidence"
-                    ? `${data.unexpectedStateChanges} unexpected changes were confirmed by deterministic evidence.`
+                    ? `${data.deterministic.violations.length} objective contract violation${data.deterministic.violations.length === 1 ? " was" : "s were"} confirmed by deterministic evidence.`
                     : data?.decisionBasis === "adjudication"
                       ? "A conditional adjudicator resolved the evaluator disagreement and found that the observed behavior did not satisfy the declared contract."
                       : "Both semantic evaluators found that the observed behavior did not satisfy the declared contract."
@@ -230,6 +230,32 @@ export const ContractAnalysisSection = ({
           <p className="mt-2 font-medium text-muted-foreground">
             Evidence packet: {data.evidenceStatus}
           </p>
+
+          {data.deterministic.violations.length > 0 && (
+            <div className="mt-5 space-y-3">
+              <h4 className="font-sans font-semibold">Hard rules triggered</h4>
+              {data.deterministic.violations.map((violation) => (
+                <article
+                  key={violation.id}
+                  className="rounded-lg border border-destructive/30 bg-destructive/[0.045] p-4"
+                >
+                  <p className="font-medium text-destructive">
+                    {violation.title}
+                  </p>
+                  <p className="mt-1 leading-6 text-muted-foreground">
+                    {violation.statement}
+                  </p>
+                  <p className="mt-3 leading-6">
+                    <span className="font-medium">Suggested repair:</span>{" "}
+                    {violation.suggestedRepair}
+                  </p>
+                  <p className="mt-2 font-mono text-sm text-muted-foreground">
+                    Evidence: {violation.evidenceIds.join(", ")}
+                  </p>
+                </article>
+              ))}
+            </div>
+          )}
 
           {data.deterministic.facts.length > 0 && (
             <ul className="mt-4 space-y-2 border-l-2 border-border pl-4 text-muted-foreground">

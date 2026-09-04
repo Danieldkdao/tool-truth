@@ -34,7 +34,20 @@ const getToolStatus = (annotations?: Record<string, unknown>) => {
   return "Available";
 };
 
-const toDetectedTool = (tool: WebMCPTool): DetectedTool => {
+const readOutputSchema = (tool: WebMCPTool) => {
+  const runtimeSchema = (tool as WebMCPTool & { outputSchema?: unknown })
+    .outputSchema;
+  const schema =
+    runtimeSchema ??
+    tool.annotations?.outputSchema ??
+    tool.annotations?.output_schema;
+  return typeof schema === "string" ||
+    (schema && typeof schema === "object" && !Array.isArray(schema))
+    ? (schema as string | Record<string, unknown>)
+    : undefined;
+};
+
+export const toDetectedTool = (tool: WebMCPTool): DetectedTool => {
   return {
     id: `${tool.frameId}:${tool.name}`,
     name: tool.name,
@@ -42,6 +55,7 @@ const toDetectedTool = (tool: WebMCPTool): DetectedTool => {
     result: getToolStatus(tool.annotations),
     frameId: tool.frameId,
     inputSchema: tool.inputSchema,
+    outputSchema: readOutputSchema(tool),
     annotations: tool.annotations,
   };
 };

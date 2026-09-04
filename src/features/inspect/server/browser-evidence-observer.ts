@@ -24,6 +24,8 @@ export type ObservedRuntimeError = {
 export type BrowserEvidenceSnapshot = {
   network: ObservedNetworkEntry[];
   runtimeErrors: ObservedRuntimeError[];
+  networkLimitReached: boolean;
+  runtimeErrorLimitReached: boolean;
 };
 
 type CdpSession = ReturnType<Page["getSessionForFrame"]>;
@@ -106,11 +108,18 @@ export const createBrowserEvidenceObserver = async (
   const pendingRequests = new Map<string, PendingRequest>();
   let network: ObservedNetworkEntry[] = [];
   let runtimeErrors: ObservedRuntimeError[] = [];
+  let networkLimitReached = false;
+  let runtimeErrorLimitReached = false;
   let fatalError: Error | undefined;
   let disposed = false;
 
   const appendNetwork = (entry: ObservedNetworkEntry) => {
-    if (network.length < MAX_CAPTURED_NETWORK_ENTRIES) network.push(entry);
+    if (network.length < MAX_CAPTURED_NETWORK_ENTRIES) {
+      network.push(entry);
+      return;
+    }
+
+    networkLimitReached = true;
   };
 
   const finishRequest = (
@@ -173,7 +182,10 @@ export const createBrowserEvidenceObserver = async (
       finishRequest(session, event.requestId, event.timestamp, event.errorText);
     };
     const exceptionThrown = (event: ExceptionThrownEvent) => {
-      if (runtimeErrors.length >= MAX_RUNTIME_ERRORS) return;
+      if (runtimeErrors.length >= MAX_RUNTIME_ERRORS) {
+        runtimeErrorLimitReached = true;
+        return;
+      }
       const details = event.exceptionDetails;
       runtimeErrors.push({
         type: "exception",
@@ -243,6 +255,8 @@ export const createBrowserEvidenceObserver = async (
   const reset = () => {
     network = [];
     runtimeErrors = [];
+    networkLimitReached = false;
+    runtimeErrorLimitReached = false;
     pendingRequests.clear();
   };
 
@@ -251,6 +265,8 @@ export const createBrowserEvidenceObserver = async (
     return {
       network: network.map((entry) => ({ ...entry })),
       runtimeErrors: runtimeErrors.map((entry) => ({ ...entry })),
+      networkLimitReached,
+      runtimeErrorLimitReached,
     };
   };
 

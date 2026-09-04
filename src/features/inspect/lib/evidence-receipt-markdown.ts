@@ -303,6 +303,7 @@ export const serializeEvidenceReceiptMarkdown = (receipt: EvidenceReceipt) => {
   const findingCount = Object.keys(asObject(analysis.findings) ?? {}).length;
   const deterministic = asObject(analysis.deterministic);
   const facts = asArray(deterministic?.facts);
+  const violations = asArray(deterministic?.violations);
   const adjudication = asObject(analysis.adjudication);
   const regression = asObject(analysis.regression);
   const regressionExpectation = asObject(regression?.expectation);
@@ -357,6 +358,10 @@ export const serializeEvidenceReceiptMarkdown = (receipt: EvidenceReceipt) => {
     "",
     createJsonBlock(receipt.selectedTool.inputSchema ?? null),
     "",
+    "### Output schema",
+    "",
+    createJsonBlock(receipt.selectedTool.outputSchema ?? null),
+    "",
     "### Annotations",
     "",
     createJsonBlock(receipt.selectedTool.annotations ?? null),
@@ -383,6 +388,27 @@ export const serializeEvidenceReceiptMarkdown = (receipt: EvidenceReceipt) => {
               : `- ${escapeMarkdown(value)}`;
           })
           .join("\n"),
+    "",
+    "### Hard-rule violations",
+    "",
+    violations.length === 0
+      ? "_No objective hard-rule violation was confirmed._"
+      : violations
+          .map((value) => {
+            const violation = asObject(value);
+            if (!violation) return `- ${escapeMarkdown(value)}`;
+
+            return [
+              `#### ${escapeMarkdown(violation.title ?? violation.id)}`,
+              "",
+              escapeMarkdown(violation.statement),
+              "",
+              `**Suggested repair:** ${escapeMarkdown(violation.suggestedRepair)}`,
+              "",
+              `**Evidence:** ${asArray(violation.evidenceIds).map((id) => `\`${escapeMarkdown(id)}\``).join(", ") || "Unavailable"}`,
+            ].join("\n");
+          })
+          .join("\n\n"),
     "",
     "## Semantic evaluators",
     "",

@@ -52,6 +52,22 @@ const identifyAgentMartOrigin = (targetUrl: string) => {
 export const isAgentMartDemoUrl = (targetUrl: string) =>
   identifyAgentMartOrigin(targetUrl) !== null;
 
+export const getAgentMartRegressionInput = (
+  targetUrl: string,
+  toolName: string,
+): Record<string, unknown> | null => {
+  if (!identifyAgentMartOrigin(targetUrl)) return null;
+
+  const expectation = (
+    AGENTMART_REGRESSION_MANIFEST.tools as Record<
+      string,
+      AgentMartRegressionExpectation | undefined
+    >
+  )[toolName];
+
+  return expectation ? { ...expectation.input } : null;
+};
+
 export const evaluateAgentMartRegression = ({
   targetUrl,
   toolName,

@@ -12,7 +12,7 @@ import {
   sanitizeObjectForExport,
   type SafeJsonObject,
   type SafeJsonValue,
-} from "./report-redaction";
+} from "./report-redaction.ts";
 
 export type EvidenceReceiptFormat = "json" | "markdown";
 

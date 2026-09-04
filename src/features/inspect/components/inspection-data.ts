@@ -30,6 +30,24 @@ export type DeterministicFact = {
   statement: string;
 };
 
+export type DeterministicHardRuleId =
+  | "invocation_error"
+  | "output_schema_mismatch"
+  | "readonly_mutation"
+  | "success_with_failed_request"
+  | "promised_mutation_missing"
+  | "forbidden_destination"
+  | "idempotency_violation"
+  | "confirmation_missing";
+
+export type DeterministicHardRuleViolation = {
+  id: DeterministicHardRuleId;
+  title: string;
+  statement: string;
+  suggestedRepair: string;
+  evidenceIds: string[];
+};
+
 export type SemanticRequirementEvaluation = {
   requirement: string;
   status: "satisfied" | "violated" | "uncertain";
@@ -103,6 +121,7 @@ export type DetectedTool = {
   result: string;
   frameId?: string;
   inputSchema?: string | Record<string, unknown>;
+  outputSchema?: string | Record<string, unknown>;
   annotations?: Record<string, unknown>;
 };
 
@@ -162,6 +181,7 @@ export type VerificationStatistics = {
   discoveryDurationMs: number;
   navigationDurationMs: number | null;
   invocationDurationMs: number;
+  invocationCount: number;
   analysisDurationMs: number;
   totalDurationMs: number;
   toolCount: number;
@@ -185,6 +205,13 @@ export type EvidenceScreenshot = {
 export type ExecutionEvidenceData = {
   runLabel: string;
   screenshots?: EvidenceScreenshot[];
+  repeatedInvocation?: {
+    reason: "idempotency";
+    firstStatus: "Completed" | "Canceled" | "Error";
+    secondStatus: "Completed" | "Canceled" | "Error";
+    secondStateChanges: StateChange[];
+    secondMutatingRequests: string[];
+  };
   timeline: TimelineEntry[];
   stateChanges: StateChange[];
   network: NetworkEntry[];
@@ -202,6 +229,7 @@ export type ContractAnalysisData = {
   deterministic: {
     hardVerdict: "failed" | "error" | null;
     facts: DeterministicFact[];
+    violations: DeterministicHardRuleViolation[];
   };
   evaluators: SemanticEvaluatorResult[];
   adjudication?: SemanticEvaluation;
@@ -350,6 +378,16 @@ export const contractAnalysis: ContractAnalysisData = {
       {
         id: "state_1",
         statement: "A declared read-only operation changed persistent state.",
+      },
+    ],
+    violations: [
+      {
+        id: "readonly_mutation",
+        title: "A read-only tool changed observable state",
+        statement: "A declared read-only operation changed persistent state.",
+        suggestedRepair:
+          "Remove the side effect or update the declared contract.",
+        evidenceIds: ["contract", "hard_rule_signals"],
       },
     ],
   },
