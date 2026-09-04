@@ -291,8 +291,14 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
           attempt: selectedVerification.attempt,
           status: selectedVerification.status,
           error: selectedVerification.error,
-          selectedTool,
-          discoveredTools: tools ?? [selectedTool],
+          selectedTool: selectedVerification.verifiedTool ?? selectedTool,
+          discoveredTools: tools
+            ? tools.map((tool) =>
+                tool.id === selectedTool.id
+                  ? (selectedVerification.verifiedTool ?? selectedTool)
+                  : tool,
+              )
+            : [selectedVerification.verifiedTool ?? selectedTool],
           browserData: session.snapshot.browserData,
           browserSession: selectedVerification.browserSession ?? browserSession,
           evidence: selectedVerification.evidenceData,

@@ -1,4 +1,6 @@
 import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
+import Ajv2019 from "ajv/dist/2019.js";
+import Ajv2020 from "ajv/dist/2020.js";
 
 import type {
   ContractAnalysisData,
@@ -52,17 +54,19 @@ export type DeterministicHardRuleEvaluation = {
   violations: DeterministicHardRuleViolation[];
 };
 
-const ajv = new Ajv({
+const AJV_OPTIONS = {
   allErrors: true,
   allowUnionTypes: true,
   strict: false,
-});
+} as const;
 const schemaValidators = new Map<string, ValidateFunction>();
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
-const parseSchema = (schema: DetectedTool["outputSchema"]) => {
+const parseSchema = (
+  schema: DetectedTool["inputSchema"] | DetectedTool["outputSchema"],
+) => {
   if (!schema) return null;
   if (typeof schema !== "string") return schema;
 
@@ -74,12 +78,26 @@ const parseSchema = (schema: DetectedTool["outputSchema"]) => {
   }
 };
 
+const compileSchema = (schema: Record<string, unknown>) => {
+  const dialect = typeof schema.$schema === "string" ? schema.$schema : "";
+  if (/draft\/2020-12/i.test(dialect)) {
+    return new Ajv2020(AJV_OPTIONS).compile(schema);
+  }
+  if (/draft\/2019-09/i.test(dialect)) {
+    return new Ajv2019(AJV_OPTIONS).compile(schema);
+  }
+  return new Ajv(AJV_OPTIONS).compile(schema);
+};
+
 const getSchemaValidator = (schema: Record<string, unknown>) => {
   const key = JSON.stringify(schema);
   const cached = schemaValidators.get(key);
   if (cached) return cached;
 
-  const validator = ajv.compile(schema);
+  // Each cached validator owns its Ajv instance. Evicting the validator therefore
+  // releases Ajv's internal schema registry too and prevents untrusted `$id`
+  // values from colliding across discovered tools.
+  const validator = compileSchema(schema);
   if (schemaValidators.size >= 100) {
     const oldestKey = schemaValidators.keys().next().value;
     if (typeof oldestKey === "string") schemaValidators.delete(oldestKey);
@@ -124,11 +142,6 @@ const indicatesReadOnlyBehavior = (tool: DetectedTool) => {
 };
 
 const promisesMutation = (tool: DetectedTool) => {
-  const annotations = tool.annotations ?? {};
-  if (annotations.readOnly === false || annotations.readOnlyHint === false) {
-    return true;
-  }
-
   return /\b(adds?|books?|cancels?|charges?|checkouts?|creates?|deletes?|modifies?|places?|purchases?|removes?|reserves?|restores?|saves?|sends?|submits?|updates?|writes?)\b/i.test(
     tool.description,
   );
@@ -190,12 +203,54 @@ const requiresConfirmation = (tool: DetectedTool) => {
   );
 };
 
-const inputConfirmsAction = (input: Record<string, unknown>) =>
-  Object.entries(input).some(
-    ([key, value]) =>
-      /^(?:confirm|confirmed|confirmation|approved|userApproved)$/i.test(key) &&
-      value === true,
+const describesConfirmation = (value: unknown) =>
+  typeof value === "string" &&
+  /(?:approv(?:al|e|ed)|confirm(?:ation|ed)?|consent|acknowledg(?:e|ed|ement))/i.test(
+    value,
   );
+
+const findConfirmationPaths = (
+  schema: Record<string, unknown>,
+  parentPath: string[] = [],
+): string[][] => {
+  if (!isRecord(schema.properties)) return [];
+
+  return Object.entries(schema.properties).flatMap(([name, rawProperty]) => {
+    if (!isRecord(rawProperty)) return [];
+
+    const path = [...parentPath, name];
+    const identifiesConfirmation =
+      rawProperty.type === "boolean" &&
+      (describesConfirmation(name) ||
+        describesConfirmation(rawProperty.title) ||
+        describesConfirmation(rawProperty.description));
+    const nestedPaths = findConfirmationPaths(rawProperty, path);
+    return identifiesConfirmation ? [path, ...nestedPaths] : nestedPaths;
+  });
+};
+
+const readPath = (value: Record<string, unknown>, path: string[]) => {
+  let current: unknown = value;
+  for (const segment of path) {
+    if (!isRecord(current)) return undefined;
+    current = current[segment];
+  }
+  return current;
+};
+
+const readConfirmationState = (
+  tool: DetectedTool,
+  input: Record<string, unknown>,
+) => {
+  const inputSchema = parseSchema(tool.inputSchema);
+  if (!inputSchema) return "unknown" as const;
+
+  const paths = findConfirmationPaths(inputSchema);
+  if (paths.length === 0) return "unknown" as const;
+  return paths.some((path) => readPath(input, path) === true)
+    ? ("confirmed" as const)
+    : ("missing" as const);
+};
 
 export const toolPromisesIdempotency = (tool: DetectedTool) => {
   const annotations = tool.annotations ?? {};
@@ -324,23 +379,6 @@ export const evaluateDeterministicHardRules = (
     const applicationRequests = input.networkRequests.filter(
       isApplicationRequest,
     );
-    const failedApplicationRequests = applicationRequests.filter(
-      (request) => !isSuccessfulRequest(request),
-    );
-    if (
-      explicitlyClaimsSuccess(input.toolOutput) &&
-      failedApplicationRequests.length > 0 &&
-      applicationRequests.every((request) => !isSuccessfulRequest(request))
-    ) {
-      addViolation({
-        id: "success_with_failed_request",
-        title: "The tool reported success after its request failed",
-        statement: `The output explicitly reported success, but all ${applicationRequests.length} captured application request${applicationRequests.length === 1 ? "" : "s"} failed.`,
-        suggestedRepair:
-          "Return a failure when the underlying request fails and expose a useful, non-sensitive error to the caller.",
-        evidenceIds: ["output", "hard_rule_signals"],
-      });
-    }
 
     if (
       input.evidenceComplete &&
@@ -362,11 +400,15 @@ export const evaluateDeterministicHardRules = (
       });
     }
 
+    const confirmationState = readConfirmationState(
+      input.tool,
+      input.toolInput,
+    );
     if (
       requiresConfirmation(input.tool) &&
       explicitlyClaimsSuccess(input.toolOutput) &&
       mutationCount > 0 &&
-      !inputConfirmsAction(input.toolInput) &&
+      confirmationState === "missing" &&
       (input.after.dom.dialogs ?? 0) <= (input.before.dom.dialogs ?? 0)
     ) {
       addViolation({

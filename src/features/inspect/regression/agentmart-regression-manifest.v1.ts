@@ -1,5 +1,6 @@
 import type {
   ContractAnalysisData,
+  DeterministicHardRuleId,
   RegressionExpectedOutcome,
 } from "../components/inspection-data.ts";
 import { AGENTMART_DEMO_URL } from "./agentmart-fixture.ts";
@@ -12,10 +13,12 @@ export type AgentMartRegressionExpectation = {
   acceptedVerdicts: ContractAnalysisData["verdict"][];
   acceptedDecisionBases: ContractAnalysisData["decisionBasis"][];
   acceptedEvidenceStatuses: ContractAnalysisData["evidenceStatus"][];
+  expectedViolationIds?: DeterministicHardRuleId[];
+  expectedSemanticSignals?: string[];
 };
 
 export const AGENTMART_REGRESSION_MANIFEST = {
-  schemaVersion: "1.0",
+  schemaVersion: "1.1",
   fixture: {
     id: "agentmart",
     name: "AgentMart",
@@ -40,6 +43,7 @@ export const AGENTMART_REGRESSION_MANIFEST = {
       acceptedVerdicts: ["failed"],
       acceptedDecisionBases: ["hard_evidence"],
       acceptedEvidenceStatuses: ["complete"],
+      expectedViolationIds: ["output_schema_mismatch"],
     },
     add_to_cart: {
       input: { productId: "headphones-01", quantity: 1 },
@@ -58,6 +62,7 @@ export const AGENTMART_REGRESSION_MANIFEST = {
       acceptedVerdicts: ["failed"],
       acceptedDecisionBases: ["hard_evidence"],
       acceptedEvidenceStatuses: ["complete"],
+      expectedViolationIds: ["readonly_mutation"],
     },
     estimate_shipping: {
       input: { postalCode: "78701" },
@@ -67,6 +72,7 @@ export const AGENTMART_REGRESSION_MANIFEST = {
       acceptedVerdicts: ["failed"],
       acceptedDecisionBases: ["evaluator_consensus", "adjudication"],
       acceptedEvidenceStatuses: ["complete"],
+      expectedSemanticSignals: ["violated requirement"],
     },
     calculate_cart_total: {
       input: { postalCode: "78701" },
@@ -89,6 +95,7 @@ export const AGENTMART_REGRESSION_MANIFEST = {
       acceptedVerdicts: ["failed"],
       acceptedDecisionBases: ["evaluator_consensus", "adjudication"],
       acceptedEvidenceStatuses: ["complete"],
+      expectedSemanticSignals: ["violated requirement"],
     },
     cancel_order: {
       input: { orderId: "order-0001" },
@@ -98,6 +105,7 @@ export const AGENTMART_REGRESSION_MANIFEST = {
       acceptedVerdicts: ["failed"],
       acceptedDecisionBases: ["hard_evidence"],
       acceptedEvidenceStatuses: ["complete"],
+      expectedViolationIds: ["promised_mutation_missing"],
     },
     summarize_reviews: {
       input: { productId: "headphones-01" },
@@ -107,6 +115,12 @@ export const AGENTMART_REGRESSION_MANIFEST = {
       acceptedVerdicts: ["failed"],
       acceptedDecisionBases: ["evaluator_consensus", "adjudication"],
       acceptedEvidenceStatuses: ["complete"],
+      expectedSemanticSignals: [
+        "untrusted",
+        "instruction",
+        "prompt injection",
+        "trust boundary",
+      ],
     },
     create_order_idempotent: {
       input: {
@@ -120,6 +134,7 @@ export const AGENTMART_REGRESSION_MANIFEST = {
       acceptedVerdicts: ["failed"],
       acceptedDecisionBases: ["hard_evidence"],
       acceptedEvidenceStatuses: ["complete"],
+      expectedViolationIds: ["idempotency_violation"],
     },
   } satisfies Record<string, AgentMartRegressionExpectation>,
 } as const;

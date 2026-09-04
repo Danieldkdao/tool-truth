@@ -16,6 +16,7 @@ const SECRET_VALUES = [
   "sk-test-secret-value",
   "session-secret-123",
   "signed-live-token",
+  "output-schema-secret",
 ];
 
 const createSource = (): EvidenceReceiptSource => {
@@ -30,6 +31,12 @@ const createSource = (): EvidenceReceiptSource => {
         email: { type: "string", example: "owner@example.com" },
         password: { type: "string", default: "hunter2" },
         productId: { type: "string", example: "headphones-01" },
+      },
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        password: { type: "string", default: "output-schema-secret" },
       },
     },
     annotations: {
@@ -213,6 +220,20 @@ test("creates complete JSON and Markdown receipts without private values", () =>
         )
       : false,
     true,
+  );
+  assert.equal(
+    receipt.selectedTool.outputSchema &&
+      typeof receipt.selectedTool.outputSchema === "object" &&
+      !Array.isArray(receipt.selectedTool.outputSchema)
+      ? JSON.stringify(receipt.selectedTool.outputSchema).includes(
+          `"default":"${REDACTED_VALUE}"`,
+        )
+      : false,
+    true,
+  );
+  assert.equal(
+    receipt.browser.preview?.url,
+    "https://example.com/orders?product=%5BREDACTED%5D&token=%5BREDACTED%5D",
   );
   assert.match(json, /"timeline": \[/);
   assert.match(json, /"stateChanges": \[/);

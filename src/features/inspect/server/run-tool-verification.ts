@@ -51,7 +51,9 @@ import {
 } from "@/features/inspect/server/discover-webmcp-tools";
 import { getInspectionBrowserLabel } from "@/features/inspect/server/stagehand-browser";
 import {
+  parseInspectionUrl,
   UnsafeInspectionUrlError,
+  validateInspectionHostname,
   validateInspectionUrl,
 } from "@/features/inspect/server/validate-inspection-url";
 
@@ -60,6 +62,8 @@ const TOOL_INVOCATION_TIMEOUT_MS = 20_000;
 const MAX_LOG_ENTRIES = 250;
 const MAX_NETWORK_ENTRIES = 100;
 const MAX_TEXT_LENGTH = 20_000;
+const MAX_DESTINATION_HOSTNAME_CHECKS = 32;
+const DESTINATION_CHECK_CONCURRENCY = 8;
 
 const SNAPSHOT_EXPRESSION = `(() => {
   const compactText = (element, maxLength = 240) => String(
@@ -504,20 +508,59 @@ const findForbiddenDestinationRequests = async (
   const candidates = entries.filter(
     (entry) => entry.status === 0 || entry.status === 403,
   );
-  const checks = await Promise.all(
-    candidates.map(async (entry) => {
-      try {
-        await validateInspectionUrl(entry.url);
-        return null;
-      } catch (error) {
-        return error instanceof UnsafeInspectionUrlError
-          ? `${entry.method} ${safeUrlPath(entry.url)} · blocked`
-          : null;
-      }
-    }),
-  );
+  const blockedEntries = new Set<ObservedNetworkEntry>();
+  const entriesByHostname = new Map<string, ObservedNetworkEntry[]>();
 
-  return checks.filter((entry): entry is string => Boolean(entry));
+  for (const entry of candidates) {
+    try {
+      const { hostname } = parseInspectionUrl(entry.url);
+      const hostnameEntries = entriesByHostname.get(hostname) ?? [];
+      hostnameEntries.push(entry);
+      entriesByHostname.set(hostname, hostnameEntries);
+    } catch (error) {
+      if (error instanceof UnsafeInspectionUrlError) blockedEntries.add(entry);
+    }
+  }
+
+  const hostnames = [...entriesByHostname.keys()];
+  const checkedHostnames = hostnames.slice(0, MAX_DESTINATION_HOSTNAME_CHECKS);
+  for (
+    let index = 0;
+    index < checkedHostnames.length;
+    index += DESTINATION_CHECK_CONCURRENCY
+  ) {
+    const batch = checkedHostnames.slice(
+      index,
+      index + DESTINATION_CHECK_CONCURRENCY,
+    );
+    const results = await Promise.all(
+      batch.map(async (hostname) => {
+        try {
+          await validateInspectionHostname(hostname);
+          return { hostname, blocked: false };
+        } catch (error) {
+          return {
+            hostname,
+            blocked: error instanceof UnsafeInspectionUrlError,
+          };
+        }
+      }),
+    );
+
+    for (const { hostname, blocked } of results) {
+      if (!blocked) continue;
+      for (const entry of entriesByHostname.get(hostname) ?? []) {
+        blockedEntries.add(entry);
+      }
+    }
+  }
+
+  return {
+    requests: candidates
+      .filter((entry) => blockedEntries.has(entry))
+      .map((entry) => `${entry.method} ${safeUrlPath(entry.url)} · blocked`),
+    complete: hostnames.length <= MAX_DESTINATION_HOSTNAME_CHECKS,
+  };
 };
 
 const captureSnapshot = async (
@@ -782,6 +825,7 @@ export const runToolVerification = async ({
         ...toDetectedTool(liveTool),
         id: selectedTool.id,
       };
+      report({ kind: "tool.ready", toolId: selectedTool.id, data: tool });
       const toolInput = await generateSafeToolInput(
         tool,
         recordAiActivity,
@@ -935,10 +979,13 @@ export const runToolVerification = async ({
       const stateChanges = compareSnapshots(before, after);
       const network = toNetworkEntries(after.network);
       const observedMutations = after.network.filter(isObservedMutationRequest);
-      const forbiddenDestinationRequests =
+      const destinationInspection =
         await findForbiddenDestinationRequests(after.network);
+      const forbiddenDestinationRequests = destinationInspection.requests;
       const evidenceComplete =
         !after.networkLimitReached &&
+        !after.runtimeErrorLimitReached &&
+        destinationInspection.complete &&
         stateChanges.length < 100 &&
         (repeatedInvocation?.secondStateChanges.length ?? 0) < 100;
 

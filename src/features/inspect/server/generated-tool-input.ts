@@ -1,3 +1,8 @@
+import safeRegex from "safe-regex2";
+
+const MAX_PATTERN_LENGTH = 200;
+const MAX_PATTERN_VALUE_LENGTH = 500;
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
@@ -62,7 +67,14 @@ export const normalizeGeneratedToolInput = (
       typeof propertySchema.pattern === "string"
     ) {
       try {
-        if (!new RegExp(propertySchema.pattern).test(value)) {
+        const patternIsSafe =
+          propertySchema.pattern.length <= MAX_PATTERN_LENGTH &&
+          value.length <= MAX_PATTERN_VALUE_LENGTH &&
+          safeRegex(propertySchema.pattern);
+        if (
+          !patternIsSafe ||
+          !new RegExp(propertySchema.pattern).test(value)
+        ) {
           normalized[name] = fallback[name];
           return;
         }

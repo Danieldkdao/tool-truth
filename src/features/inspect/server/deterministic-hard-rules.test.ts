@@ -99,11 +99,33 @@ test("accepts output that satisfies the declared JSON schema", () => {
   );
 });
 
-test("fails explicit success when every captured application request failed", () => {
+test("validates output schemas that declare the 2020-12 dialect", () => {
   const input = createInput({
     tool: {
       ...createInput().tool,
-      description: "Creates an order and returns whether it succeeded.",
+      outputSchema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        properties: {
+          tags: {
+            type: "array",
+            prefixItems: [{ type: "string" }],
+            items: false,
+          },
+        },
+      },
+    },
+    toolOutput: { tags: ["valid", "unexpected"] },
+  });
+
+  assert.equal(violationIds(input).includes("output_schema_mismatch"), true);
+});
+
+test("does not attribute an uncorrelated failed request to the tool", () => {
+  const input = createInput({
+    tool: {
+      ...createInput().tool,
+      description: "Returns whether the operation succeeded.",
       annotations: { readOnlyHint: false },
     },
     toolOutput: { success: true },
@@ -118,10 +140,7 @@ test("fails explicit success when every captured application request failed", ()
     ],
   });
 
-  assert.equal(
-    violationIds(input).includes("success_with_failed_request"),
-    true,
-  );
+  assert.equal(evaluateDeterministicHardRules(input).hardVerdict, null);
 });
 
 test("does not hard-fail a success claim when an application request succeeded", () => {
@@ -145,10 +164,7 @@ test("does not hard-fail a success claim when an application request succeeded",
     ],
   });
 
-  assert.equal(
-    violationIds(input).includes("success_with_failed_request"),
-    false,
-  );
+  assert.equal(evaluateDeterministicHardRules(input).hardVerdict, null);
 });
 
 test("fails a successful promised mutation when complete direct evidence shows no effect", () => {
@@ -166,6 +182,22 @@ test("fails a successful promised mutation when complete direct evidence shows n
   assert.equal(
     violationIds(input).includes("promised_mutation_missing"),
     true,
+  );
+});
+
+test("does not treat a false read-only hint as a promise to mutate", () => {
+  const input = createInput({
+    tool: {
+      ...createInput().tool,
+      description: "Returns the current cart when available.",
+      annotations: { readOnlyHint: false },
+    },
+    toolOutput: { success: true },
+  });
+
+  assert.equal(
+    violationIds(input).includes("promised_mutation_missing"),
+    false,
   );
 });
 
@@ -275,6 +307,10 @@ test("fails a consequential success when a promised confirmation never occurred"
       ...createInput().tool,
       description: "Deletes the order only after explicit user confirmation.",
       annotations: { readOnlyHint: false, requiresConfirmation: true },
+      inputSchema: {
+        type: "object",
+        properties: { confirmed: { type: "boolean" } },
+      },
     },
     toolInput: { confirmed: false },
     toolOutput: { success: true },
@@ -282,4 +318,51 @@ test("fails a consequential success when a promised confirmation never occurred"
   });
 
   assert.equal(violationIds(input).includes("confirmation_missing"), true);
+});
+
+test("honors a nested schema-defined confirmation signal", () => {
+  const input = createInput({
+    tool: {
+      ...createInput().tool,
+      description: "Deletes the order only after explicit user confirmation.",
+      annotations: { readOnlyHint: false, requiresConfirmation: true },
+      inputSchema: {
+        type: "object",
+        properties: {
+          approval: {
+            type: "object",
+            properties: {
+              approvalGranted: {
+                type: "boolean",
+              },
+            },
+          },
+        },
+      },
+    },
+    toolInput: { approval: { approvalGranted: true } },
+    toolOutput: { success: true },
+    mutatingRequests: ["DELETE https://example.com/api/orders/order-1 · 204"],
+  });
+
+  assert.equal(violationIds(input).includes("confirmation_missing"), false);
+});
+
+test("leaves confirmation semantics unresolved when the schema identifies no signal", () => {
+  const input = createInput({
+    tool: {
+      ...createInput().tool,
+      description: "Deletes the order only after explicit user confirmation.",
+      annotations: { readOnlyHint: false, requiresConfirmation: true },
+      inputSchema: {
+        type: "object",
+        properties: { actionMode: { type: "string" } },
+      },
+    },
+    toolInput: { actionMode: "approved" },
+    toolOutput: { success: true },
+    mutatingRequests: ["DELETE https://example.com/api/orders/order-1 · 204"],
+  });
+
+  assert.equal(violationIds(input).includes("confirmation_missing"), false);
 });

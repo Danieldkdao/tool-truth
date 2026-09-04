@@ -10,7 +10,12 @@ import {
 
 type RegressionAnalysis = Pick<
   ContractAnalysisData,
-  "verdict" | "decisionBasis" | "evidenceStatus"
+  | "verdict"
+  | "decisionBasis"
+  | "evidenceStatus"
+  | "deterministic"
+  | "evaluators"
+  | "adjudication"
 >;
 
 const formatAcceptedValues = (values: readonly string[]) => values.join(" or ");
@@ -27,6 +32,74 @@ const createCheck = (
   expected: formatAcceptedValues(acceptedValues),
   actual,
 });
+
+const collectViolatedSemanticRequirements = (
+  analysis: RegressionAnalysis,
+) => {
+  const evaluations = analysis.adjudication
+    ? [analysis.adjudication]
+    : analysis.evaluators.flatMap((evaluator) =>
+        evaluator.evaluation ? [evaluator.evaluation] : [],
+      );
+
+  return [
+    ...new Set(
+      evaluations.flatMap((evaluation) =>
+        evaluation.requirements
+          .filter((requirement) => requirement.status === "violated")
+          .map(
+            (requirement) =>
+              `${requirement.requirement}: ${requirement.reason}`,
+          ),
+      ),
+    ),
+  ];
+};
+
+const createOutcomeSignalCheck = (
+  expectation: AgentMartRegressionExpectation,
+  analysis: RegressionAnalysis,
+): RegressionManifestCheck | null => {
+  const violationIds = analysis.deterministic.violations.map(({ id }) => id);
+  if (expectation.expectedViolationIds?.length) {
+    return {
+      id: "outcome_signal",
+      label: "Expected deterministic violation",
+      passed: expectation.expectedViolationIds.every((id) =>
+        violationIds.includes(id),
+      ),
+      expected: expectation.expectedViolationIds.join(" and "),
+      actual: violationIds.join(", ") || "none",
+    };
+  }
+
+  if (expectation.expectedSemanticSignals?.length) {
+    const violatedRequirements = collectViolatedSemanticRequirements(analysis);
+    const normalizedRequirements = violatedRequirements
+      .join(" ")
+      .toLocaleLowerCase();
+    const expectsAnyViolatedRequirement =
+      expectation.expectedSemanticSignals.length === 1 &&
+      expectation.expectedSemanticSignals[0] === "violated requirement";
+    const passed = expectsAnyViolatedRequirement
+      ? violatedRequirements.length > 0
+      : expectation.expectedSemanticSignals.some((signal) =>
+          normalizedRequirements.includes(signal.toLocaleLowerCase()),
+        );
+
+    return {
+      id: "outcome_signal",
+      label: "Expected semantic violation",
+      passed,
+      expected: expectsAnyViolatedRequirement
+        ? "at least one violated semantic requirement"
+        : `a violated requirement mentioning ${formatAcceptedValues(expectation.expectedSemanticSignals)}`,
+      actual: violatedRequirements.join(" | ") || "none",
+    };
+  }
+
+  return null;
+};
 
 const identifyAgentMartOrigin = (targetUrl: string) => {
   try {
@@ -90,6 +163,9 @@ export const evaluateAgentMartRegression = ({
     verdict: analysis.verdict,
     decisionBasis: analysis.decisionBasis,
     evidenceStatus: analysis.evidenceStatus,
+    violationIds: analysis.deterministic.violations.map(({ id }) => id),
+    violatedSemanticRequirements:
+      collectViolatedSemanticRequirements(analysis),
   };
   const fixture = {
     id: AGENTMART_REGRESSION_MANIFEST.fixture.id,
@@ -129,7 +205,8 @@ export const evaluateAgentMartRegression = ({
       expectation.acceptedEvidenceStatuses,
       analysis.evidenceStatus,
     ),
-  ];
+    createOutcomeSignalCheck(expectation, analysis),
+  ].filter((check): check is RegressionManifestCheck => check !== null);
 
   return {
     fixture,
@@ -143,6 +220,12 @@ export const evaluateAgentMartRegression = ({
       acceptedVerdicts: [...expectation.acceptedVerdicts],
       acceptedDecisionBases: [...expectation.acceptedDecisionBases],
       acceptedEvidenceStatuses: [...expectation.acceptedEvidenceStatuses],
+      expectedViolationIds: expectation.expectedViolationIds
+        ? [...expectation.expectedViolationIds]
+        : undefined,
+      expectedSemanticSignals: expectation.expectedSemanticSignals
+        ? [...expectation.expectedSemanticSignals]
+        : undefined,
     },
     actual,
     checks,

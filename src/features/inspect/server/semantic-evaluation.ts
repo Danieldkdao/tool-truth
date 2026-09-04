@@ -27,6 +27,7 @@ const MAX_BODY_TEXT_LENGTH = 8_000;
 const MAX_EVIDENCE_PACKET_LENGTH = 60_000;
 const MAX_EVIDENCE_ITEMS_LENGTH = 54_000;
 const MAX_EVIDENCE_ITEM_DATA_LENGTH = 6_000;
+const MAX_CORE_EVIDENCE_ITEM_DATA_LENGTH = 4_500;
 const MAX_STRING_LENGTH = 4_000;
 const MAX_ARRAY_ITEMS = 100;
 const MAX_OBJECT_KEYS = 100;
@@ -322,17 +323,20 @@ const normalizeSnapshot = (snapshot: SemanticBrowserSnapshot) => {
   };
 };
 
-const boundEvidenceData = (value: unknown) => {
+const boundEvidenceData = (
+  value: unknown,
+  maxLength = MAX_EVIDENCE_ITEM_DATA_LENGTH,
+) => {
   const safeValue = toSafeSerializable(value);
   const serialized = JSON.stringify(safeValue);
-  if (!serialized || serialized.length <= MAX_EVIDENCE_ITEM_DATA_LENGTH) {
+  if (!serialized || serialized.length <= maxLength) {
     return safeValue;
   }
 
   return {
     truncated: true,
     originalCharacters: serialized.length,
-    serializedPrefix: serialized.slice(0, MAX_EVIDENCE_ITEM_DATA_LENGTH),
+    serializedPrefix: serialized.slice(0, maxLength),
   };
 };
 
@@ -438,10 +442,16 @@ const createEvidencePacket = (input: SemanticAnalysisInput) => {
   const coreEvidenceItemCount =
     CORE_EVIDENCE_ITEM_COUNT + (input.repeatedInvocation ? 1 : 0);
   let retainedLength = 0;
-  let evidenceStatus: SemanticConsensus["evidenceStatus"] = "complete";
+  let evidenceStatus: SemanticConsensus["evidenceStatus"] =
+    input.evidenceComplete ? "complete" : "partial";
 
-  for (const candidate of candidates) {
-    const data = boundEvidenceData(candidate.data);
+  for (const [index, candidate] of candidates.entries()) {
+    const data = boundEvidenceData(
+      candidate.data,
+      index < coreEvidenceItemCount
+        ? MAX_CORE_EVIDENCE_ITEM_DATA_LENGTH
+        : MAX_EVIDENCE_ITEM_DATA_LENGTH,
+    );
     if (
       typeof data === "object" &&
       data !== null &&

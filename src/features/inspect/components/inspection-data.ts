@@ -34,7 +34,6 @@ export type DeterministicHardRuleId =
   | "invocation_error"
   | "output_schema_mismatch"
   | "readonly_mutation"
-  | "success_with_failed_request"
   | "promised_mutation_missing"
   | "forbidden_destination"
   | "idempotency_violation"
@@ -81,7 +80,7 @@ export type RegressionExpectedOutcome =
   | "repeated_call_failure";
 
 export type RegressionManifestCheck = {
-  id: "verdict" | "decision_basis" | "evidence_status";
+  id: "verdict" | "decision_basis" | "evidence_status" | "outcome_signal";
   label: string;
   passed: boolean;
   expected: string;
@@ -105,11 +104,15 @@ export type RegressionManifestEvaluation = {
     acceptedVerdicts: ContractAnalysisData["verdict"][];
     acceptedDecisionBases: ContractAnalysisData["decisionBasis"][];
     acceptedEvidenceStatuses: ContractAnalysisData["evidenceStatus"][];
+    expectedViolationIds?: DeterministicHardRuleId[];
+    expectedSemanticSignals?: string[];
   } | null;
   actual: {
     verdict: ContractAnalysisData["verdict"];
     decisionBasis: ContractAnalysisData["decisionBasis"];
     evidenceStatus: ContractAnalysisData["evidenceStatus"];
+    violationIds: DeterministicHardRuleId[];
+    violatedSemanticRequirements: string[];
   };
   checks: RegressionManifestCheck[];
 };

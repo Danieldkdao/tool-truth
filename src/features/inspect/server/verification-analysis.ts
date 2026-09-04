@@ -456,14 +456,14 @@ export const analyzeToolVerification = async (
       }
     : fallbackFinding;
   let suggestedRepair =
-    primaryViolation
+    missingNoInputInvocationError
+      ? "This tool accepts no input, so different synthetic input will not help. Inspect its runtime preconditions and make the tool self-contained or declare the required setup."
+      : primaryViolation
       ? primaryViolation.suggestedRepair
       : verdict === "failed"
         ? "Align the implementation with the declared contract or update the contract so it accurately describes the supported behavior."
       : verdict === "error"
-        ? missingNoInputInvocationError
-          ? "This tool accepts no input, so different synthetic input will not help. Inspect its runtime preconditions and make the tool self-contained or declare the required setup."
-          : "Inspect the invocation error and retry with valid synthetic input."
+        ? "Inspect the invocation error and retry with valid synthetic input."
         : "No contract repair is recommended from this run; keep the evidence as a regression fixture.";
 
   if (!getToolTruthAnalysisModel()) {

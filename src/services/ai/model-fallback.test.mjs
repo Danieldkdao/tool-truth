@@ -7,7 +7,7 @@ import {
 } from "./model-fallback.ts";
 
 const PRIMARY_MODEL_ID = "primary/model";
-const FALLBACK_MODEL_ID = "deepseek/deepseek-v4-flash-vision-exp";
+const FALLBACK_MODEL_ID = "z-ai/glm-5.3-flash";
 
 test("uses the fallback model when the primary generation fails", async () => {
   const attempts = [];

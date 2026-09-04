@@ -100,7 +100,9 @@ const matchesPrivateFieldName = (fieldName: string) => {
 };
 
 const isSchemaPath = (path: string[]) =>
-  path.some((segment) => normalizeFieldName(segment) === "inputschema");
+  path.some((segment) =>
+    ["inputschema", "outputschema"].includes(normalizeFieldName(segment)),
+  );
 
 const schemaPropertyIsSensitive = (path: string[]) => {
   const propertiesIndex = path.findIndex(
@@ -131,9 +133,6 @@ const shouldRedactField = (fieldName: string, parentPath: string[]) => {
   );
 };
 
-const shouldRedactUrlParameter = (fieldName: string) =>
-  matchesSensitiveFieldName(fieldName) || matchesPrivateFieldName(fieldName);
-
 const sanitizeUrl = (value: string) => {
   const trimmed = value.trim();
   const isAbsolute = /^https?:\/\//i.test(trimmed);
@@ -148,9 +147,7 @@ const sanitizeUrl = (value: string) => {
     url.hash = "";
 
     for (const key of [...url.searchParams.keys()]) {
-      if (shouldRedactUrlParameter(key)) {
-        url.searchParams.set(key, REDACTED_VALUE);
-      }
+      url.searchParams.set(key, REDACTED_VALUE);
     }
 
     return isAbsolute
@@ -185,10 +182,7 @@ export const redactSensitiveText = (value: string) => {
       /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
       REDACTED_VALUE,
     )
-    .replace(
-      /([?&](?:access[_-]?token|api[_-]?key|auth|authorization|client[_-]?secret|cookie|credential|email|password|refresh[_-]?token|secret|session|token)=)[^&#\s]*/gi,
-      "$1%5BREDACTED%5D",
-    )
+    .replace(/([?&][A-Za-z0-9._~-]+=)[^&#\s]*/g, "$1%5BREDACTED%5D")
     .replace(
       /\b(password|passphrase|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|cookie|secret)(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^,;\s}]+)/gi,
       (_match, fieldName: string, separator: string) =>
