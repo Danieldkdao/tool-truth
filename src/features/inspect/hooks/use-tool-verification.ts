@@ -15,6 +15,7 @@ import type {
   SectionProgress,
   VerificationStreamEvent,
 } from "@/features/inspect/components/inspection-stream";
+import { mergeHydratedProbeRecords } from "@/features/inspect/lib/probe-history";
 import { shouldApplyEventSequence } from "@/features/inspect/lib/verification-event-order";
 
 export type ToolVerificationRecord = {
@@ -153,26 +154,10 @@ const reduceVerification = (
   if (action.type === "batch.completed") return { ...state, isRunningAll: false };
 
   if (action.type === "hydrated") {
-    let nextState = state;
-    for (const record of action.records) {
-      nextState = {
-        ...nextState,
-        recordsByProbeId: {
-          ...nextState.recordsByProbeId,
-          [record.probeId]: record,
-        },
-        probeOrderByToolId: appendProbe(
-          nextState.probeOrderByToolId,
-          record.toolId,
-          record.probeId,
-        ),
-        activeProbeIdByToolId: {
-          ...nextState.activeProbeIdByToolId,
-          [record.toolId]: record.probeId,
-        },
-      };
-    }
-    return nextState;
+    return {
+      ...state,
+      ...mergeHydratedProbeRecords(state, action.records),
+    };
   }
 
   if (action.type === "selected") {

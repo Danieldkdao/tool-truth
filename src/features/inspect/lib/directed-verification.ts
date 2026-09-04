@@ -57,7 +57,10 @@ const readOutputPath = (output: unknown, path: string[]) => {
   let current = output;
 
   for (const segment of path) {
-    if (!isRecord(current) || !(segment in current)) {
+    if (
+      !isRecord(current) ||
+      !Object.prototype.hasOwnProperty.call(current, segment)
+    ) {
       return { exists: false, value: undefined } as const;
     }
     current = current[segment];
@@ -104,23 +107,10 @@ export const resolveDirectedLineage = (
       (left, right) =>
         (left.directedTest?.round ?? 0) - (right.directedTest?.round ?? 0),
     );
-  const latest = directedProbes.at(-1);
-
-  if (basedOnProbeId) {
-    const requestedParent = probes.find((probe) => probe.id === basedOnProbeId);
-    if (
-      !requestedParent?.directedTest ||
-      requestedParent.toolId !== toolId ||
-      requestedParent.status !== "completed" ||
-      requestedParent.id !== latest?.id
-    ) {
-      return {
-        ok: false,
-        message:
-          "basedOnProbeId must reference the latest completed directed round for this tool.",
-      };
-    }
-  } else if (latest && latest.status !== "completed") {
+  const activeProbe = directedProbes.find(
+    (probe) => probe.status === "queued" || probe.status === "running",
+  );
+  if (activeProbe) {
     return {
       ok: false,
       message:
@@ -128,11 +118,31 @@ export const resolveDirectedLineage = (
     };
   }
 
+  const latestCompleted = directedProbes
+    .filter((probe) => probe.status === "completed")
+    .at(-1);
+
+  if (basedOnProbeId) {
+    const requestedParent = probes.find((probe) => probe.id === basedOnProbeId);
+    if (
+      !requestedParent?.directedTest ||
+      requestedParent.toolId !== toolId ||
+      requestedParent.status !== "completed" ||
+      requestedParent.id !== latestCompleted?.id
+    ) {
+      return {
+        ok: false,
+        message:
+          "basedOnProbeId must reference the latest completed directed round for this tool.",
+      };
+    }
+  }
+
   return {
     ok: true,
-    parentProbeId: latest?.id ?? null,
-    rootProbeId: latest?.directedTest?.rootProbeId ?? newProbeId,
-    round: (latest?.directedTest?.round ?? 0) + 1,
+    parentProbeId: latestCompleted?.id ?? null,
+    rootProbeId: latestCompleted?.directedTest?.rootProbeId ?? newProbeId,
+    round: (latestCompleted?.directedTest?.round ?? 0) + 1,
   };
 };
 
@@ -244,15 +254,14 @@ const evaluateAssertion = (
         repeated.firstStatus === "Completed" &&
         repeated.secondStatus === "Completed" &&
         repeated.secondStateChanges.length === 0 &&
-        repeated.secondMutatingRequests.length === 0 &&
         sameOutput;
 
       return {
         assertion,
         status: isIdempotent ? "satisfied" : "violated",
         explanation: isIdempotent
-          ? "The identical second invocation completed without a new effect or output change."
-          : "The identical second invocation changed status, output, state, or network effects.",
+          ? "The identical second invocation completed without a new state effect or output change."
+          : "The identical second invocation changed status, output, or observable state.",
         evidenceIds: ["repeated_invocation"],
       };
     }

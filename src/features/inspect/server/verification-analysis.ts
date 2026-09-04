@@ -55,7 +55,10 @@ const parseJsonResponse = <T>(text: string, schema: z.ZodType<T>) => {
   return schema.parse(JSON.parse(withoutFence.slice(start, end + 1)));
 };
 
-type AnalysisInput = SemanticAnalysisInput & { sandboxLabel: string };
+type AnalysisInput = SemanticAnalysisInput & {
+  sandboxLabel: string;
+  semanticToolInput?: Record<string, unknown>;
+};
 
 type AiActivityReporter = (message: string) => void;
 
@@ -352,6 +355,10 @@ export const analyzeToolVerification = async (
   signal?: AbortSignal,
 ): Promise<ContractAnalysisData> => {
   throwIfAborted(signal);
+  const semanticInput: SemanticAnalysisInput = {
+    ...input,
+    toolInput: input.semanticToolInput ?? input.toolInput,
+  };
   const consequentialStateChanges = input.stateChanges.filter(
     ([path]) =>
       path === "page.url" ||
@@ -367,7 +374,7 @@ export const analyzeToolVerification = async (
       "No hard violation detected; requesting two independent semantic evaluations",
     );
     const semantic = await evaluateSemanticConsensus(
-      input,
+      semanticInput,
       reportActivity,
       signal,
     );
@@ -518,7 +525,7 @@ export const analyzeToolVerification = async (
             `Tool: ${input.tool.name}`,
             `Description: ${input.tool.description}`,
             `Annotations: ${serializeUntrustedEvidence(input.tool.annotations ?? {})}`,
-            `Input: ${serializeUntrustedEvidence(input.toolInput)}`,
+            `Input: ${serializeUntrustedEvidence(semanticInput.toolInput)}`,
             `Output: ${serializeUntrustedEvidence(input.toolOutput, 4_000)}`,
             `Invocation status: ${input.invocationStatus}`,
             `Invocation error: ${input.invocationError ?? "none"}`,

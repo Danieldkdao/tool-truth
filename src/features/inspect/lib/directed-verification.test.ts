@@ -115,6 +115,33 @@ test("checks repeated invocation status, output, state, and mutations", () => {
   assert.equal(failed.verdict, "failed");
 });
 
+test("allows an idempotent repeated request to perform the same write", () => {
+  const result = evaluateDirectedTest({
+    ...baseInput,
+    assertions: [{ kind: "same_input_is_idempotent" }],
+    repeatedInvocation: {
+      firstStatus: "Completed",
+      secondStatus: "Completed",
+      firstOutput: { id: "order-1", status: "confirmed" },
+      secondOutput: { status: "confirmed", id: "order-1" },
+      secondStateChanges: [],
+      secondMutatingRequests: ["PUT /orders/order-1 · 200"],
+    },
+  });
+
+  assert.equal(result.verdict, "passed");
+});
+
+test("does not treat inherited members as returned output fields", () => {
+  const result = evaluateDirectedTest({
+    ...baseInput,
+    assertions: [{ kind: "output_field_exists", path: ["toString"] }],
+    toolOutput: {},
+  });
+
+  assert.equal(result.verdict, "failed");
+});
+
 test("rejects prototype-related output paths", () => {
   assert.equal(isSafeDirectedOutputPath(["result", "total"]), true);
   assert.equal(isSafeDirectedOutputPath(["__proto__", "polluted"]), false);
@@ -165,6 +192,62 @@ test("creates a linear round chain and rejects stale or cross-tool parents", () 
     resolveDirectedLineage(probes, "preview", "probe-3", "other-probe").ok,
     false,
   );
+});
+
+test("retries from the latest completed round after a failed or canceled round", () => {
+  const probes = [
+    {
+      id: "probe-1",
+      toolId: "preview",
+      status: "completed" as const,
+      directedTest: { rootProbeId: "probe-1", round: 1 },
+    },
+    {
+      id: "probe-2",
+      toolId: "preview",
+      status: "failed" as const,
+      directedTest: { rootProbeId: "probe-1", round: 2 },
+    },
+    {
+      id: "probe-3",
+      toolId: "preview",
+      status: "canceled" as const,
+      directedTest: { rootProbeId: "probe-1", round: 2 },
+    },
+  ];
+
+  assert.deepEqual(
+    resolveDirectedLineage(probes, "preview", "probe-4", "probe-1"),
+    {
+      ok: true,
+      parentProbeId: "probe-1",
+      rootProbeId: "probe-1",
+      round: 2,
+    },
+  );
+  assert.deepEqual(resolveDirectedLineage(probes, "preview", "probe-4"), {
+    ok: true,
+    parentProbeId: "probe-1",
+    rootProbeId: "probe-1",
+    round: 2,
+  });
+});
+
+test("still blocks a new directed round while one is active", () => {
+  const result = resolveDirectedLineage(
+    [
+      {
+        id: "probe-1",
+        toolId: "preview",
+        status: "running",
+        directedTest: { rootProbeId: "probe-1", round: 1 },
+      },
+    ],
+    "preview",
+    "probe-2",
+  );
+
+  assert.equal(result.ok, false);
 });
 
 test("each assertion kind produces its deterministic terminal states", () => {

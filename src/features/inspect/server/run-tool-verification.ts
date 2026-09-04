@@ -26,6 +26,7 @@ import type { VerificationStreamEvent } from "@/features/inspect/components/insp
 import { evaluateDirectedTest } from "@/features/inspect/lib/directed-verification";
 import {
   directedInputRequestsIdempotency,
+  resolveModelAnalysisToolInput,
   resolveVerificationToolInput,
   type VerificationInputSource,
 } from "@/features/inspect/lib/verification-input-source";
@@ -1149,6 +1150,10 @@ export const runToolVerification = async ({
     {
       tool: captured.tool,
       toolInput: captured.toolInput,
+      semanticToolInput: resolveModelAnalysisToolInput(
+        inputSource,
+        captured.toolInput,
+      ),
       toolOutput: captured.result.output,
       invocationStatus: captured.result.status,
       invocationError:
