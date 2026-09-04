@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 
 import type {
   DetectedTool,
+  DirectedVerificationRequest,
   EvidenceTab,
   ToolVerificationStatus,
 } from "@/features/inspect/components/inspection-data";
@@ -17,6 +18,7 @@ type InspectionRunStreamState = ReturnType<typeof useInspectionRunStream>;
 
 export type InspectionEvidenceFocus = {
   toolId?: string;
+  probeId?: string;
   tab?: EvidenceTab;
 };
 
@@ -32,6 +34,9 @@ export type InspectionSessionSnapshot = {
   activeEvidenceTab: EvidenceTab;
   selectedVerification: ToolVerificationRecord | undefined;
   verificationRecords: Record<string, ToolVerificationRecord>;
+  recordsByProbeId: Record<string, ToolVerificationRecord>;
+  probeOrderByToolId: Record<string, string[]>;
+  activeProbeIdByToolId: Record<string, string>;
   verificationStatuses: Record<
     string,
     ToolVerificationStatus | undefined
@@ -50,6 +55,13 @@ export type InspectionSessionController = {
     toolId?: string,
     signal?: AbortSignal,
   ) => Promise<boolean>;
+  startDirectedVerification: (
+    request: DirectedVerificationRequest,
+    signal?: AbortSignal,
+  ) => Promise<
+    | { started: true; probeId: string }
+    | { started: false; result: unknown }
+  >;
   runAllVerifications: (signal?: AbortSignal) => Promise<boolean>;
 };
 
@@ -59,10 +71,15 @@ export const useInspectionSessionController = (
   const run = useInspectionRunStream(runId);
   const {
     records: verificationRecords,
+    recordsByProbeId,
+    probeOrderByToolId,
+    activeProbeIdByToolId,
     isAnyRunning,
     isRunningAll,
     startVerification: startToolVerification,
+    startDirectedVerification: startToolDirectedVerification,
     runAllVerifications: runToolVerifications,
+    selectProbe,
   } = useToolVerification(runId);
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [activeEvidenceTab, setActiveEvidenceTab] =
@@ -91,16 +108,45 @@ export const useInspectionSessionController = (
   );
 
   const focusEvidence = useCallback(
-    ({ toolId, tab }: InspectionEvidenceFocus) => {
-      if (toolId && !run.tools?.some((tool) => tool.id === toolId)) {
+    ({ toolId, probeId, tab }: InspectionEvidenceFocus) => {
+      const probeToolId = probeId ? recordsByProbeId[probeId]?.toolId : undefined;
+      const targetToolId = toolId ?? probeToolId;
+      if (targetToolId && !run.tools?.some((tool) => tool.id === targetToolId)) {
         return false;
       }
 
-      if (toolId) setSelectedToolId(toolId);
+      if (
+        probeId &&
+        (!probeToolId || (toolId !== undefined && probeToolId !== toolId))
+      ) {
+        return false;
+      }
+
+      if (targetToolId) setSelectedToolId(targetToolId);
+      if (probeId && targetToolId) selectProbe(targetToolId, probeId);
       if (tab) setActiveEvidenceTab(tab);
       return true;
     },
-    [run.tools],
+    [recordsByProbeId, run.tools, selectProbe],
+  );
+
+  const startDirectedVerification = useCallback(
+    async (request: DirectedVerificationRequest, signal?: AbortSignal) => {
+      if (isBusy) {
+        return {
+          started: false,
+          result: { status: "error", error: "busy" },
+        } as const;
+      }
+      if (!focusEvidence({ toolId: request.toolId, tab: "Timeline" })) {
+        return {
+          started: false,
+          result: { status: "error", error: "tool_not_found" },
+        } as const;
+      }
+      return startToolDirectedVerification(request, signal);
+    },
+    [focusEvidence, isBusy, startToolDirectedVerification],
   );
 
   const startVerification = useCallback(
@@ -136,6 +182,9 @@ export const useInspectionSessionController = (
       activeEvidenceTab,
       selectedVerification,
       verificationRecords,
+      recordsByProbeId,
+      probeOrderByToolId,
+      activeProbeIdByToolId,
       verificationStatuses,
       isBusy,
       isRunningAll,
@@ -159,6 +208,9 @@ export const useInspectionSessionController = (
       runId,
       selectedTool,
       selectedVerification,
+      activeProbeIdByToolId,
+      probeOrderByToolId,
+      recordsByProbeId,
       verificationRecords,
       verificationStatuses,
     ],
@@ -168,6 +220,7 @@ export const useInspectionSessionController = (
     snapshot,
     focusEvidence,
     startVerification,
+    startDirectedVerification,
     runAllVerifications,
   };
 };

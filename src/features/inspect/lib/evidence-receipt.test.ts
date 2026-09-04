@@ -8,6 +8,7 @@ import {
   type EvidenceReceiptSource,
 } from "./evidence-receipt.ts";
 import { serializeEvidenceReceiptMarkdown } from "./evidence-receipt-markdown.ts";
+import { createEvidenceReceiptResult } from "./evidence-receipt-result.ts";
 import { REDACTED_VALUE, redactSensitiveText } from "./report-redaction.ts";
 
 const SECRET_VALUES = [
@@ -264,6 +265,78 @@ test("creates filesystem-safe, format-specific filenames", () => {
     createEvidenceReceiptFilename(receipt, "markdown"),
     "tooltruth-preview-order-2026-09-03T18-45-00-000Z.md",
   );
+});
+
+test("returns the complete receipt in the WebMCP-selected format", () => {
+  const jsonResult = createEvidenceReceiptResult(createSource(), "json");
+  const markdownResult = createEvidenceReceiptResult(
+    createSource(),
+    "markdown",
+  );
+
+  assert.equal(jsonResult.format, "json");
+  assert.equal(jsonResult.mediaType, "application/json");
+  assert.equal(typeof jsonResult.content, "object");
+  assert.equal(
+    typeof jsonResult.content === "object"
+      ? jsonResult.content.schemaVersion
+      : null,
+    "1.1",
+  );
+
+  assert.equal(markdownResult.format, "markdown");
+  assert.equal(markdownResult.mediaType, "text/markdown");
+  assert.equal(typeof markdownResult.content, "string");
+  assert.match(
+    String(markdownResult.content),
+    /^# ToolTruth WebMCP Evidence Receipt/m,
+  );
+  assert.match(
+    String(markdownResult.content),
+    /^## Appendix: complete sanitized receipt$/m,
+  );
+});
+
+test("adds redacted collaboration data only for directed probes", () => {
+  const automaticReceipt = createEvidenceReceipt(createSource());
+  assert.equal(automaticReceipt.schemaVersion, "1.1");
+  assert.equal(automaticReceipt.collaboration, undefined);
+
+  const source = createSource();
+  source.directedTest = {
+    request: "Check owner@example.com without mutation",
+    input: { email: "owner@example.com", productId: "headphones-01" },
+    inputHash: "input-hash",
+    assertions: [
+      { kind: "no_mutating_requests" },
+      {
+        kind: "output_field_equals",
+        path: ["password"],
+        expected: "hunter2",
+      },
+    ],
+    parentProbeId: null,
+    rootProbeId: "probe-public-456",
+    round: 1,
+  };
+  source.directedEvaluation = {
+    verdict: "failed",
+    checks: [
+      {
+        assertion: { kind: "no_mutating_requests" },
+        status: "violated",
+        explanation: "A mutation was observed for owner@example.com.",
+        evidenceIds: ["network"],
+      },
+    ],
+  };
+
+  const directedReceipt = createEvidenceReceipt(source);
+  const serialized = serializeEvidenceReceiptJson(directedReceipt);
+  assert.equal(directedReceipt.collaboration?.round, 1);
+  assert.match(serialized, /"collaboration"/);
+  assert.doesNotMatch(serialized, /owner@example\.com/);
+  assert.match(serialized, /\[REDACTED\]/);
 });
 
 test("keeps ordinary text unchanged while redacting credentials", () => {

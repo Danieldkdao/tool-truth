@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { BadgeCheck, BadgeX, CircleHelp, Play } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -8,6 +9,7 @@ import {
 } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { AnalysisCollapsible } from "@/features/inspect/components/analysis-collapsible";
 import { EvidenceReceiptExportMenu } from "@/features/inspect/components/evidence-receipt-export-menu";
 import type {
   ContractAnalysisData,
@@ -24,6 +26,7 @@ type ContractAnalysisSectionProps = {
   isBusy: boolean;
   error?: string | null;
   exportSource: EvidenceReceiptSource | null;
+  directedVerification?: ReactNode;
   onRunVerification: () => void;
 };
 
@@ -65,6 +68,7 @@ export const ContractAnalysisSection = ({
   isBusy,
   error,
   exportSource,
+  directedVerification,
   onRunVerification,
 }: ContractAnalysisSectionProps) => {
   const analysisFindings = data ? Object.values(data.findings) : [];
@@ -189,177 +193,265 @@ export const ContractAnalysisSection = ({
         </Button>
       </section>
 
-      <section className="space-y-4 px-6 py-6">
-        <div className="border-l-4 border-primary bg-primary/[0.055] px-4 py-4">
-          <h3 className="font-sans font-semibold text-primary">
-            Declared behavior
-          </h3>
-          <p className="mt-2 leading-7 text-muted-foreground">
-            {finding.declared}
-          </p>
-        </div>
-
+      <section className="border-t border-border px-4 py-4">
         <div
-          className={`border-l-4 px-4 py-4 ${
-            hasFailed
-              ? "border-destructive bg-destructive/[0.055]"
-              : "border-border bg-muted/45"
-          }`}
+          key={selectedTool.id}
+          className="overflow-hidden rounded-xl border border-border bg-card"
         >
-          <h3
-            className={`font-sans font-semibold ${hasFailed ? "text-destructive" : "text-foreground"}`}
+          {directedVerification}
+
+          <AnalysisCollapsible
+            title="Behavior comparison"
+            description="Declared intent and observed runtime behavior"
+            defaultOpen
           >
-            Observed behavior
-          </h3>
-          <p className="mt-2 leading-7 text-foreground">{finding.observed}</p>
-        </div>
-      </section>
-
-      {data && (
-        <section className="border-t border-border px-6 py-6">
-          <h3 className="font-sans font-semibold">Decision basis</h3>
-          <p className="mt-2 leading-7 text-muted-foreground">
-            {data.decisionBasis === "hard_evidence"
-              ? "The deterministic engine found an indisputable result, so AI could explain it but could not override it."
-              : data.decisionBasis === "evaluator_consensus"
-                ? "No hard violation was found. Two independent semantic evaluations agreed on the final verdict."
-                : data.decisionBasis === "adjudication"
-                  ? "No hard violation was found. The primary evaluators disagreed, so a conditional third model resolved the disputed claims from the original evidence."
-                  : "No hard violation was found, but the semantic evaluation layer could not establish consensus."}
-          </p>
-          <p className="mt-2 font-medium text-muted-foreground">
-            Evidence packet: {data.evidenceStatus}
-          </p>
-
-          {data.deterministic.violations.length > 0 && (
-            <div className="mt-5 space-y-3">
-              <h4 className="font-sans font-semibold">Hard rules triggered</h4>
-              {data.deterministic.violations.map((violation) => (
-                <article
-                  key={violation.id}
-                  className="rounded-lg border border-destructive/30 bg-destructive/[0.045] p-4"
-                >
-                  <p className="font-medium text-destructive">
-                    {violation.title}
-                  </p>
-                  <p className="mt-1 leading-6 text-muted-foreground">
-                    {violation.statement}
-                  </p>
-                  <p className="mt-3 leading-6">
-                    <span className="font-medium">Suggested repair:</span>{" "}
-                    {violation.suggestedRepair}
-                  </p>
-                  <p className="mt-2 font-mono text-sm text-muted-foreground">
-                    Evidence: {violation.evidenceIds.join(", ")}
-                  </p>
-                </article>
-              ))}
-            </div>
-          )}
-
-          {data.deterministic.facts.length > 0 && (
-            <ul className="mt-4 space-y-2 border-l-2 border-border pl-4 text-muted-foreground">
-              {data.deterministic.facts.map((fact) => (
-                <li key={fact.id}>{fact.statement}</li>
-              ))}
-            </ul>
-          )}
-
-          {data.regression && (
-            <article
-              className={`mt-5 rounded-lg border p-4 ${
-                data.regression.status === "matched"
-                  ? "border-emerald-600/30 bg-emerald-600/[0.055]"
-                  : data.regression.status === "mismatched"
-                    ? "border-destructive/30 bg-destructive/[0.055]"
-                    : "border-amber-600/30 bg-amber-600/[0.055]"
-              }`}
-            >
-              <div className="flex items-start gap-3">
-                {data.regression.status === "matched" ? (
-                  <BadgeCheck
-                    className="mt-0.5 size-5 shrink-0 text-emerald-600 dark:text-emerald-400"
-                    aria-hidden="true"
-                  />
-                ) : data.regression.status === "mismatched" ? (
-                  <BadgeX
-                    className="mt-0.5 size-5 shrink-0 text-destructive"
-                    aria-hidden="true"
-                  />
-                ) : (
-                  <CircleHelp
-                    className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-400"
-                    aria-hidden="true"
-                  />
-                )}
-                <div className="min-w-0 flex-1">
-                  <h4 className="font-sans font-semibold">
-                    {data.regression.status === "matched"
-                      ? "AgentMart regression check passed"
-                      : data.regression.status === "mismatched"
-                        ? "AgentMart regression check failed"
-                        : "AgentMart tool is not covered"}
-                  </h4>
-                  <p className="mt-1 leading-6 text-muted-foreground">
-                    {data.regression.expectation
-                      ? `Expected ${data.regression.expectation.label.toLowerCase()}; observed ${formatRegressionValue(data.regression.actual.verdict)} using ${formatRegressionValue(data.regression.actual.decisionBasis)}.`
-                      : "This URL is the AgentMart fixture, but this tool has no expectation in the current manifest."}
-                  </p>
-                  <p className="mt-2 font-mono text-muted-foreground">
-                    Manifest {data.regression.manifestVersion} · Fixture {data.regression.fixture.version}
-                  </p>
-                </div>
+            <div className="space-y-4">
+              <div className="border-l-4 border-primary bg-primary/[0.055] px-4 py-4">
+                <h3 className="font-sans font-semibold text-primary">
+                  Declared behavior
+                </h3>
+                <p className="mt-2 leading-7 text-muted-foreground">
+                  {finding.declared}
+                </p>
               </div>
 
-              {data.regression.checks.length > 0 && (
-                <ul className="mt-4 space-y-2 border-l-2 border-border pl-4">
-                  {data.regression.checks.map((check) => (
-                    <li key={check.id}>
-                      <p className="font-medium">
-                        {check.passed ? "Matched" : "Mismatch"}: {check.label}
-                      </p>
-                      <p className="mt-1 text-muted-foreground">
-                        Expected {formatRegressionValue(check.expected)} · Actual {formatRegressionValue(check.actual)}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </article>
-          )}
+              <div
+                className={`border-l-4 px-4 py-4 ${
+                  hasFailed
+                    ? "border-destructive bg-destructive/[0.055]"
+                    : "border-border bg-muted/45"
+                }`}
+              >
+                <h3
+                  className={`font-sans font-semibold ${hasFailed ? "text-destructive" : "text-foreground"}`}
+                >
+                  Observed behavior
+                </h3>
+                <p className="mt-2 leading-7 text-foreground">
+                  {finding.observed}
+                </p>
+              </div>
+            </div>
+          </AnalysisCollapsible>
 
-          {data.evaluators.length > 0 && (
-            <div className="mt-5 space-y-3">
-              {data.evaluators.map((result) => {
-                const evaluation = result.evaluation;
-                const label =
-                  result.evaluator === "contract_checker"
-                    ? "Contract checker"
-                    : "Evidence checker";
+          {data && (
+            <AnalysisCollapsible
+              title="Decision details"
+              description="Why ToolTruth reached this verdict"
+            >
+                <p className="leading-7 text-muted-foreground">
+                  {data.decisionBasis === "hard_evidence"
+                    ? "The deterministic engine found an indisputable result, so AI could explain it but could not override it."
+                    : data.decisionBasis === "evaluator_consensus"
+                      ? "No hard violation was found. Two independent semantic evaluations agreed on the final verdict."
+                      : data.decisionBasis === "adjudication"
+                        ? "No hard violation was found. The primary evaluators disagreed, so a conditional third model resolved the disputed claims from the original evidence."
+                        : "No hard violation was found, but the semantic evaluation layer could not establish consensus."}
+                </p>
+                <p className="mt-2 font-medium text-muted-foreground">
+                  Evidence packet: {data.evidenceStatus}
+                </p>
 
-                return (
+                {data.deterministic.violations.length > 0 && (
+                  <div className="mt-5 space-y-3">
+                    <h4 className="font-sans font-semibold">
+                      Hard rules triggered
+                    </h4>
+                    {data.deterministic.violations.map((violation) => (
+                      <article
+                        key={violation.id}
+                        className="rounded-lg border border-destructive/30 bg-destructive/[0.045] p-4"
+                      >
+                        <p className="font-medium text-destructive">
+                          {violation.title}
+                        </p>
+                        <p className="mt-1 leading-6 text-muted-foreground">
+                          {violation.statement}
+                        </p>
+                        <p className="mt-3 leading-6">
+                          <span className="font-medium">Suggested repair:</span>{" "}
+                          {violation.suggestedRepair}
+                        </p>
+                        <p className="mt-2 font-mono text-sm text-muted-foreground">
+                          Evidence: {violation.evidenceIds.join(", ")}
+                        </p>
+                      </article>
+                    ))}
+                  </div>
+                )}
+
+                {data.deterministic.facts.length > 0 && (
+                  <ul className="mt-4 space-y-2 border-l-2 border-border pl-4 text-muted-foreground">
+                    {data.deterministic.facts.map((fact) => (
+                      <li key={fact.id}>{fact.statement}</li>
+                    ))}
+                  </ul>
+                )}
+
+                {data.regression && (
                   <article
-                    key={result.evaluator}
-                    className="rounded-lg border border-border bg-muted/35 p-4"
+                    className={`mt-5 rounded-lg border p-4 ${
+                      data.regression.status === "matched"
+                        ? "border-emerald-600/30 bg-emerald-600/[0.055]"
+                        : data.regression.status === "mismatched"
+                          ? "border-destructive/30 bg-destructive/[0.055]"
+                          : "border-amber-600/30 bg-amber-600/[0.055]"
+                    }`}
                   >
+                    <div className="flex items-start gap-3">
+                      {data.regression.status === "matched" ? (
+                        <BadgeCheck
+                          className="mt-0.5 size-5 shrink-0 text-emerald-600 dark:text-emerald-400"
+                          aria-hidden="true"
+                        />
+                      ) : data.regression.status === "mismatched" ? (
+                        <BadgeX
+                          className="mt-0.5 size-5 shrink-0 text-destructive"
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <CircleHelp
+                          className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-400"
+                          aria-hidden="true"
+                        />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <h4 className="font-sans font-semibold">
+                          {data.regression.status === "matched"
+                            ? "AgentMart regression check passed"
+                            : data.regression.status === "mismatched"
+                              ? "AgentMart regression check failed"
+                              : "AgentMart tool is not covered"}
+                        </h4>
+                        <p className="mt-1 leading-6 text-muted-foreground">
+                          {data.regression.expectation
+                            ? `Expected ${data.regression.expectation.label.toLowerCase()}; observed ${formatRegressionValue(data.regression.actual.verdict)} using ${formatRegressionValue(data.regression.actual.decisionBasis)}.`
+                            : "This URL is the AgentMart fixture, but this tool has no expectation in the current manifest."}
+                        </p>
+                        <p className="mt-2 font-mono text-muted-foreground">
+                          Manifest {data.regression.manifestVersion} · Fixture{" "}
+                          {data.regression.fixture.version}
+                        </p>
+                      </div>
+                    </div>
+
+                    {data.regression.checks.length > 0 && (
+                      <ul className="mt-4 space-y-2 border-l-2 border-border pl-4">
+                        {data.regression.checks.map((check) => (
+                          <li key={check.id}>
+                            <p className="font-medium">
+                              {check.passed ? "Matched" : "Mismatch"}:{" "}
+                              {check.label}
+                            </p>
+                            <p className="mt-1 text-muted-foreground">
+                              Expected {formatRegressionValue(check.expected)} ·
+                              Actual {formatRegressionValue(check.actual)}
+                            </p>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </article>
+                )}
+
+                {data.evaluators.length > 0 && (
+                  <div className="mt-5 space-y-3">
+                    {data.evaluators.map((result) => {
+                      const evaluation = result.evaluation;
+                      const label =
+                        result.evaluator === "contract_checker"
+                          ? "Contract checker"
+                          : "Evidence checker";
+
+                      return (
+                        <article
+                          key={result.evaluator}
+                          className="rounded-lg border border-border bg-muted/35 p-4"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <h4 className="font-sans font-semibold">{label}</h4>
+                            <p className="font-medium text-muted-foreground">
+                              {evaluation
+                                ? `${evaluation.verdict.replace("_", " ")} · ${Math.round(evaluation.confidence * 100)}% confidence`
+                                : result.status}
+                            </p>
+                          </div>
+                          <p className="mt-3 leading-7 text-foreground/85">
+                            {evaluation?.summary ?? result.error}
+                          </p>
+                          {evaluation && (
+                            <details className="mt-3">
+                              <summary className="cursor-pointer font-medium text-primary">
+                                Review requirement evidence
+                              </summary>
+                              <ul className="mt-3 space-y-3 border-l-2 border-border pl-4">
+                                {evaluation.requirements.map(
+                                  (requirement, index) => (
+                                    <li
+                                      key={`${requirement.requirement}-${index}`}
+                                    >
+                                      <p className="font-medium">
+                                        {requirement.status}:{" "}
+                                        {requirement.requirement}
+                                      </p>
+                                      <p className="mt-1 leading-7 text-muted-foreground">
+                                        {requirement.reason}
+                                      </p>
+                                      <p className="mt-1 break-all font-mono text-muted-foreground">
+                                        Evidence:{" "}
+                                        {requirement.evidenceIds.join(", ") ||
+                                          "none"}
+                                      </p>
+                                    </li>
+                                  ),
+                                )}
+                              </ul>
+                              {evaluation.uncertainties.length > 0 && (
+                                <div className="mt-4 border-l-2 border-amber-500/50 pl-4">
+                                  <p className="font-medium text-amber-700 dark:text-amber-400">
+                                    Uncertainties
+                                  </p>
+                                  <ul className="mt-2 space-y-2 text-muted-foreground">
+                                    {evaluation.uncertainties.map(
+                                      (uncertainty, index) => (
+                                        <li key={`${uncertainty}-${index}`}>
+                                          {uncertainty}
+                                        </li>
+                                      ),
+                                    )}
+                                  </ul>
+                                </div>
+                              )}
+                            </details>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {data.adjudication && (
+                  <article className="mt-5 rounded-lg border border-primary/30 bg-primary/[0.045] p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <h4 className="font-sans font-semibold">{label}</h4>
+                      <h4 className="font-sans font-semibold">
+                        Conditional adjudication
+                      </h4>
                       <p className="font-medium text-muted-foreground">
-                        {evaluation
-                          ? `${evaluation.verdict.replace("_", " ")} · ${Math.round(evaluation.confidence * 100)}% confidence`
-                          : result.status}
+                        {data.adjudication.verdict.replace("_", " ")} ·{" "}
+                        {Math.round(data.adjudication.confidence * 100)}%
+                        confidence
                       </p>
                     </div>
                     <p className="mt-3 leading-7 text-foreground/85">
-                      {evaluation?.summary ?? result.error}
+                      {data.adjudication.summary}
                     </p>
-                    {evaluation && (
-                      <details className="mt-3">
-                        <summary className="cursor-pointer font-medium text-primary">
-                          Review requirement evidence
-                        </summary>
-                        <ul className="mt-3 space-y-3 border-l-2 border-border pl-4">
-                          {evaluation.requirements.map((requirement, index) => (
+                    <details className="mt-3">
+                      <summary className="cursor-pointer font-medium text-primary">
+                        Review adjudicated requirement evidence
+                      </summary>
+                      <ul className="mt-3 space-y-3 border-l-2 border-border pl-4">
+                        {data.adjudication.requirements.map(
+                          (requirement, index) => (
                             <li key={`${requirement.requirement}-${index}`}>
                               <p className="font-medium">
                                 {requirement.status}: {requirement.requirement}
@@ -368,110 +460,67 @@ export const ContractAnalysisSection = ({
                                 {requirement.reason}
                               </p>
                               <p className="mt-1 break-all font-mono text-muted-foreground">
-                                Evidence: {requirement.evidenceIds.join(", ") || "none"}
+                                Evidence:{" "}
+                                {requirement.evidenceIds.join(", ") || "none"}
                               </p>
                             </li>
-                          ))}
-                        </ul>
-                        {evaluation.uncertainties.length > 0 && (
-                          <div className="mt-4 border-l-2 border-amber-500/50 pl-4">
-                            <p className="font-medium text-amber-700 dark:text-amber-400">
-                              Uncertainties
-                            </p>
-                            <ul className="mt-2 space-y-2 text-muted-foreground">
-                              {evaluation.uncertainties.map(
-                                (uncertainty, index) => (
-                                  <li key={`${uncertainty}-${index}`}>
-                                    {uncertainty}
-                                  </li>
-                                ),
-                              )}
-                            </ul>
-                          </div>
+                          ),
                         )}
-                      </details>
-                    )}
+                      </ul>
+                      {data.adjudication.uncertainties.length > 0 && (
+                        <div className="mt-4 border-l-2 border-amber-500/50 pl-4">
+                          <p className="font-medium text-amber-700 dark:text-amber-400">
+                            Uncertainties
+                          </p>
+                          <ul className="mt-2 space-y-2 text-muted-foreground">
+                            {data.adjudication.uncertainties.map(
+                              (uncertainty, index) => (
+                                <li key={`${uncertainty}-${index}`}>
+                                  {uncertainty}
+                                </li>
+                              ),
+                            )}
+                          </ul>
+                        </div>
+                      )}
+                    </details>
                   </article>
-                );
-              })}
-            </div>
-          )}
-
-          {data.adjudication && (
-            <article className="mt-5 rounded-lg border border-primary/30 bg-primary/[0.045] p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h4 className="font-sans font-semibold">Conditional adjudication</h4>
-                <p className="font-medium text-muted-foreground">
-                  {data.adjudication.verdict.replace("_", " ")} · {Math.round(data.adjudication.confidence * 100)}% confidence
-                </p>
-              </div>
-              <p className="mt-3 leading-7 text-foreground/85">
-                {data.adjudication.summary}
-              </p>
-              <details className="mt-3">
-                <summary className="cursor-pointer font-medium text-primary">
-                  Review adjudicated requirement evidence
-                </summary>
-                <ul className="mt-3 space-y-3 border-l-2 border-border pl-4">
-                  {data.adjudication.requirements.map((requirement, index) => (
-                    <li key={`${requirement.requirement}-${index}`}>
-                      <p className="font-medium">
-                        {requirement.status}: {requirement.requirement}
-                      </p>
-                      <p className="mt-1 leading-7 text-muted-foreground">
-                        {requirement.reason}
-                      </p>
-                      <p className="mt-1 break-all font-mono text-muted-foreground">
-                        Evidence: {requirement.evidenceIds.join(", ") || "none"}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-                {data.adjudication.uncertainties.length > 0 && (
-                  <div className="mt-4 border-l-2 border-amber-500/50 pl-4">
-                    <p className="font-medium text-amber-700 dark:text-amber-400">
-                      Uncertainties
-                    </p>
-                    <ul className="mt-2 space-y-2 text-muted-foreground">
-                      {data.adjudication.uncertainties.map((uncertainty, index) => (
-                        <li key={`${uncertainty}-${index}`}>{uncertainty}</li>
-                      ))}
-                    </ul>
-                  </div>
                 )}
-              </details>
-            </article>
+            </AnalysisCollapsible>
           )}
-        </section>
-      )}
 
-      <section className="border-t border-border bg-accent/35 px-6 py-6">
-        <div className="flex items-center justify-between gap-4">
-          <h3 className="font-sans font-semibold">Probe configuration</h3>
-          <p className="text-muted-foreground">
-            {data?.sandboxLabel ?? "Disposable browser"}
-          </p>
+          <AnalysisCollapsible
+            title="Probe configuration"
+            description={data?.sandboxLabel ?? "Disposable browser"}
+          >
+              <dl className="divide-y divide-border border-y border-border">
+                <div className="py-3">
+                  <dt className="text-muted-foreground">Tool</dt>
+                  <dd className="mt-1 break-all font-mono">
+                    {selectedTool.name}
+                  </dd>
+                </div>
+                <div className="py-3">
+                  <dt className="text-muted-foreground">
+                    {finding.parameter}
+                  </dt>
+                  <dd className="mt-1 break-all font-mono">
+                    {finding.value}
+                  </dd>
+                </div>
+              </dl>
+          </AnalysisCollapsible>
+
+          <AnalysisCollapsible
+            title="Suggested repair"
+            description="Recommended next step"
+          >
+              <p className="leading-7 text-muted-foreground">
+                {data?.suggestedRepair ??
+                  "A repair recommendation will appear after the observed behavior is compared with the tool contract."}
+              </p>
+          </AnalysisCollapsible>
         </div>
-
-        <dl className="mt-4 divide-y divide-border border-y border-border">
-          <div className="py-3">
-            <dt className="text-muted-foreground">Tool</dt>
-            <dd className="mt-1 break-all font-mono">{selectedTool.name}</dd>
-          </div>
-          <div className="py-3">
-            <dt className="text-muted-foreground">{finding.parameter}</dt>
-            <dd className="mt-1 break-all font-mono">{finding.value}</dd>
-          </div>
-        </dl>
-
-      </section>
-
-      <section className="border-t border-border px-6 py-6">
-        <h3 className="font-sans font-semibold">Suggested repair</h3>
-        <p className="mt-3 leading-7 text-muted-foreground">
-          {data?.suggestedRepair ??
-            "A repair recommendation will appear after the observed behavior is compared with the tool contract."}
-        </p>
       </section>
 
       <section className="border-t border-border px-6 py-5">

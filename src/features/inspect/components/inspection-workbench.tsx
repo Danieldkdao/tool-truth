@@ -26,6 +26,7 @@ import {
   DetectedToolsSectionProgress,
   DetectedToolsSectionSkeleton,
 } from "@/features/inspect/components/detected-tools-section";
+import { DirectedVerificationPanel } from "@/features/inspect/components/directed-verification-panel";
 import {
   ExecutionEvidenceSectionEmpty,
   ExecutionEvidenceSection,
@@ -34,7 +35,7 @@ import {
 } from "@/features/inspect/components/execution-evidence-section";
 import { InspectionErrorState } from "@/features/inspect/components/inspection-error-state";
 import { useInspectionSessionController } from "@/features/inspect/hooks/use-inspection-session-controller";
-import type { EvidenceReceiptSource } from "@/features/inspect/lib/evidence-receipt";
+import { createEvidenceReceiptSourceFromSnapshot } from "@/features/inspect/lib/evidence-receipt-source";
 import { useMediaQuery } from "@/hooks/use-media-query";
 
 const DESKTOP_WORKBENCH_QUERY = "(min-width: 1024px)";
@@ -169,6 +170,8 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
     activeEvidenceTab,
     selectedVerification,
     verificationRecords,
+    recordsByProbeId,
+    probeOrderByToolId,
     verificationStatuses,
     isBusy,
     isRunningAll,
@@ -213,6 +216,8 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
               ? "Verification passed"
               : status === "inconclusive"
                 ? "Verification inconclusive"
+              : status === "canceled"
+                ? "Verification canceled"
               : status === "failed"
                 ? "Verification failed"
                 : status === "error"
@@ -280,42 +285,47 @@ export const InspectionWorkbench = ({ runId }: InspectionWorkbenchProps) => {
       />
     );
 
-  const evidenceReceiptSource: EvidenceReceiptSource | null =
-    selectedTool &&
-    selectedVerification?.probeId &&
-    selectedVerification.evidenceData &&
-    selectedVerification.analysisData
-      ? {
-          runId,
-          probeId: selectedVerification.probeId,
-          attempt: selectedVerification.attempt,
-          status: selectedVerification.status,
-          error: selectedVerification.error,
-          selectedTool: selectedVerification.verifiedTool ?? selectedTool,
-          discoveredTools: tools
-            ? tools.map((tool) =>
-                tool.id === selectedTool.id
-                  ? (selectedVerification.verifiedTool ?? selectedTool)
-                  : tool,
-              )
-            : [selectedVerification.verifiedTool ?? selectedTool],
-          browserData: session.snapshot.browserData,
-          browserSession: selectedVerification.browserSession ?? browserSession,
-          evidence: selectedVerification.evidenceData,
-          analysis: selectedVerification.analysisData,
-        }
-      : null;
+  const evidenceReceiptSource = createEvidenceReceiptSourceFromSnapshot(
+    session.snapshot,
+  );
 
+  const directedRounds = selectedToolId
+    ? (probeOrderByToolId[selectedToolId] ?? [])
+        .map((probeId) => recordsByProbeId[probeId])
+        .filter((record) => Boolean(record?.directedTest))
+        .sort(
+          (left, right) =>
+            (left.directedTest?.round ?? 0) -
+            (right.directedTest?.round ?? 0),
+        )
+    : [];
   const analysisPanel = selectedTool ? (
-    <ContractAnalysisSection
-      data={selectedVerification?.analysisData ?? null}
-      selectedTool={selectedTool}
-      isRunning={selectedVerification?.status === "running"}
-      isBusy={isBusy}
-      error={selectedVerification?.error ?? null}
-      exportSource={evidenceReceiptSource}
-      onRunVerification={() => void session.startVerification()}
-    />
+    <div className="inspect-analysis min-h-full bg-card">
+      <ContractAnalysisSection
+        data={selectedVerification?.analysisData ?? null}
+        selectedTool={selectedTool}
+        isRunning={selectedVerification?.status === "running"}
+        isBusy={isBusy}
+        error={selectedVerification?.error ?? null}
+        exportSource={evidenceReceiptSource}
+        directedVerification={
+          selectedVerification?.directedTest ? (
+            <DirectedVerificationPanel
+              record={selectedVerification}
+              rounds={directedRounds}
+              onSelectRound={(probeId) =>
+                session.focusEvidence({
+                  toolId: selectedTool.id,
+                  probeId,
+                  tab: "Timeline",
+                })
+              }
+            />
+          ) : null
+        }
+        onRunVerification={() => void session.startVerification()}
+      />
+    </div>
   ) : (
     <ContractAnalysisSectionProgress progress={progress.analysis} />
   );

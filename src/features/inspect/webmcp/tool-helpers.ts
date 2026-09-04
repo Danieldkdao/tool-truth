@@ -29,6 +29,8 @@ const EVIDENCE_VIEWS_BY_TAB: Record<EvidenceTab, EvidenceView> = {
 const TERMINAL_VERIFICATION_STATUSES = new Set([
   "passed",
   "failed",
+  "inconclusive",
+  "canceled",
   "error",
 ]);
 

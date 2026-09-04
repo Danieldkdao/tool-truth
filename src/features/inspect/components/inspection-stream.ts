@@ -2,6 +2,8 @@ import type {
   BrowserPreviewData,
   ContractAnalysisData,
   DetectedTool,
+  DirectedTestDefinition,
+  DirectedTestEvaluation,
   ExecutionEvidenceData,
 } from "@/features/inspect/components/inspection-data";
 
@@ -81,6 +83,11 @@ export type VerificationStreamEvent =
       toolId: string;
     }
   | {
+      kind: "directed.started";
+      toolId: string;
+      data: DirectedTestDefinition;
+    }
+  | {
       kind: "section.progress";
       section: "evidence" | "analysis";
       progress: SectionProgress;
@@ -105,7 +112,17 @@ export type VerificationStreamEvent =
       data: ContractAnalysisData;
     }
   | {
+      kind: "directed.ready";
+      toolId: string;
+      data: DirectedTestEvaluation;
+    }
+  | {
       kind: "probe.failed";
+      toolId: string;
+      message: string;
+    }
+  | {
+      kind: "probe.canceled";
       toolId: string;
       message: string;
     }

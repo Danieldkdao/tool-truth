@@ -36,6 +36,13 @@ export const createFocusVerificationEvidenceTool = (
         description:
           "Optional evidence view to open. Omit it to keep the current view.",
       },
+      probeId: {
+        type: "string",
+        minLength: 1,
+        maxLength: 500,
+        description:
+          "Optional completed probe ID to reopen. Use a directedRounds probeId from get_inspection_context.",
+      },
     },
     required: ["toolId"],
     additionalProperties: false,
@@ -47,9 +54,11 @@ export const createFocusVerificationEvidenceTool = (
   execute: async (input, { signal }) => {
     const toolId = readRequiredToolId(input);
     const tab = readEvidenceTab(input);
+    const probeId =
+      typeof input.probeId === "string" ? input.probeId : undefined;
     const controller = getController();
     const tool = findToolOrThrow(controller.snapshot.tools, toolId);
-    const focused = controller.focusEvidence({ toolId, tab });
+    const focused = controller.focusEvidence({ toolId, probeId, tab });
 
     if (!focused) {
       throw new Error("The requested tool could not be focused.");
@@ -59,6 +68,8 @@ export const createFocusVerificationEvidenceTool = (
       getController,
       (candidate) =>
         candidate.selectedToolId === toolId &&
+        (probeId === undefined ||
+          candidate.selectedVerification?.probeId === probeId) &&
         (tab === undefined || candidate.activeEvidenceTab === tab),
       signal,
     );
@@ -67,6 +78,7 @@ export const createFocusVerificationEvidenceTool = (
       runId: snapshot.runId,
       selectedToolId: snapshot.selectedToolId,
       selectedToolName: tool.name,
+      probeId: snapshot.selectedVerification?.probeId ?? null,
       evidenceView: toEvidenceView(snapshot.activeEvidenceTab),
     };
   },

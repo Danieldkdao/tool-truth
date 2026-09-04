@@ -23,6 +23,13 @@ import type {
   VerificationStatistics,
 } from "@/features/inspect/components/inspection-data";
 import type { VerificationStreamEvent } from "@/features/inspect/components/inspection-stream";
+import { evaluateDirectedTest } from "@/features/inspect/lib/directed-verification";
+import {
+  directedInputRequestsIdempotency,
+  resolveModelAnalysisToolInput,
+  resolveVerificationToolInput,
+  type VerificationInputSource,
+} from "@/features/inspect/lib/verification-input-source";
 import {
   evaluateAgentMartRegression,
   getAgentMartRegressionInput,
@@ -185,6 +192,7 @@ type RunToolVerificationOptions = {
   probeId: string;
   targetUrl: string;
   selectedTool: DetectedTool;
+  inputSource?: VerificationInputSource;
   browserSession: InspectionBrowserSession;
   releaseBrowser: () => Promise<void>;
   signal: AbortSignal;
@@ -693,6 +701,7 @@ export const runToolVerification = async ({
   probeId,
   targetUrl,
   selectedTool,
+  inputSource = { kind: "generated" },
   browserSession,
   releaseBrowser,
   signal,
@@ -826,14 +835,23 @@ export const runToolVerification = async ({
         id: selectedTool.id,
       };
       report({ kind: "tool.ready", toolId: selectedTool.id, data: tool });
-      const toolInput = await generateSafeToolInput(
-        tool,
-        recordAiActivity,
-        signal,
-        getAgentMartRegressionInput(targetUrl, tool.name),
+      const toolInput = await resolveVerificationToolInput(
+        inputSource,
+        () =>
+          generateSafeToolInput(
+            tool,
+            recordAiActivity,
+            signal,
+            getAgentMartRegressionInput(targetUrl, tool.name),
+          ),
       );
       throwIfAborted(signal);
-      recordTimeline("Tool input prepared", stringifyCompact(toolInput));
+      recordTimeline(
+        inputSource.kind === "directed"
+          ? "Directed input accepted"
+          : "Tool input prepared",
+        stringifyCompact(toolInput),
+      );
 
       report({
         kind: "section.progress",
@@ -904,9 +922,12 @@ export const runToolVerification = async ({
       let invocationCount = 1;
       let repeatedInvocation: RepeatedInvocationEvidence | undefined;
 
+      const directedIdempotencyRequested =
+        directedInputRequestsIdempotency(inputSource);
       if (
-        firstInvocation.result.status === "Completed" &&
-        toolPromisesIdempotency(tool)
+        directedIdempotencyRequested ||
+        (firstInvocation.result.status === "Completed" &&
+          toolPromisesIdempotency(tool))
       ) {
         report({
           kind: "section.progress",
@@ -1079,6 +1100,24 @@ export const runToolVerification = async ({
   await releaseBrowser();
   throwIfAborted(signal);
 
+  const directedEvaluation =
+    inputSource.kind === "directed"
+      ? evaluateDirectedTest({
+          assertions: inputSource.test.assertions,
+          invocationStatus: captured.result.status,
+          toolOutput: captured.result.output,
+          beforeUrl: captured.before.url,
+          afterUrl: captured.after.url,
+          stateChanges: captured.stateChanges,
+          mutatingRequests: captured.observedMutations.map(
+            (entry) =>
+              `${entry.method} ${safeUrlPath(entry.url)} · ${entry.status}`,
+          ),
+          evidenceComplete: captured.evidenceComplete,
+          repeatedInvocation: captured.repeatedInvocation,
+        })
+      : undefined;
+
   const releasedSessionStatistics = browserSession.getStatistics();
   const browserbaseStatistics = toBrowserbaseStatistics(
     releasedSessionStatistics.browserbaseLifecycle,
@@ -1111,6 +1150,10 @@ export const runToolVerification = async ({
     {
       tool: captured.tool,
       toolInput: captured.toolInput,
+      semanticToolInput: resolveModelAnalysisToolInput(
+        inputSource,
+        captured.toolInput,
+      ),
       toolOutput: captured.result.output,
       invocationStatus: captured.result.status,
       invocationError:
@@ -1197,6 +1240,13 @@ export const runToolVerification = async ({
     toolId: selectedTool.id,
     data: completedAnalysis,
   });
+  if (directedEvaluation) {
+    report({
+      kind: "directed.ready",
+      toolId: selectedTool.id,
+      data: directedEvaluation,
+    });
+  }
   report({ kind: "probe.completed", toolId: selectedTool.id });
 
   console.info("ToolTruth verification completed", {

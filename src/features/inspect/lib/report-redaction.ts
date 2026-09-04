@@ -99,6 +99,9 @@ const matchesPrivateFieldName = (fieldName: string) => {
   return PRIVATE_FIELD_NAMES.has(normalized);
 };
 
+export const isSensitiveDataFieldName = (fieldName: string) =>
+  matchesSensitiveFieldName(fieldName) || matchesPrivateFieldName(fieldName);
+
 const isSchemaPath = (path: string[]) =>
   path.some((segment) =>
     ["inputschema", "outputschema"].includes(normalizeFieldName(segment)),
